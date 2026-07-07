@@ -1,0 +1,212 @@
+#ifndef CO_MIRA_TASK_HPP
+#define CO_MIRA_TASK_HPP
+#include "co_mira.h"
+
+#include <cassert>
+#include <concepts>
+#include <coroutine>
+#include <exception>
+#include <utility>
+#include <variant>
+
+namespace mira::co {
+
+struct task_promise_base;
+template <typename T> struct task_promise;
+template <typename T> struct task;
+
+struct final_awaiter {
+  static constexpr bool await_ready() noexcept { return false; }
+  template <std::derived_from<task_promise_base> Promise>
+  co_handle<> await_suspend(co_handle<Promise> cont) noexcept {
+    auto parent = cont.promise().parent_coro_;
+
+    if constexpr (std::same_as<Promise, task_promise<void>>) {
+      if (cont.promise().is_detached()) {
+        cont.destroy();
+      }
+    }
+
+    return parent;
+  }
+  // never resume
+  static constexpr void await_resume() noexcept {}
+};
+
+struct task_promise_base {
+  task_promise_base() noexcept = default;
+  friend struct final_awaiter;
+
+  static constexpr std::suspend_always initial_suspend() noexcept { return {}; }
+  final_awaiter final_suspend() noexcept { return {}; }
+
+  constexpr void set_parent(co_handle<> cont) noexcept { parent_coro_ = cont; }
+
+  task_promise_base(const task_promise_base &) noexcept = delete;
+  task_promise_base &operator=(const task_promise_base &) noexcept = delete;
+  task_promise_base(task_promise_base &&) noexcept = delete;
+  task_promise_base &operator=(task_promise_base &&) noexcept = delete;
+
+private:
+  co_handle<> parent_coro_{std::noop_coroutine()};
+};
+
+template <typename T> struct task_promise : task_promise_base {
+  task<T> get_return_object();
+  void unhandled_exception() noexcept {
+    result_.template emplace<exception_index>(std::current_exception());
+  }
+  template <typename Value>
+  void return_value(Value &&value) noexcept(std::is_nothrow_constructible_v<T, Value &&>) {
+    result_.template emplace<value_index>(std::forward<Value>(value));
+  }
+
+  auto &&result(this auto &&self) {
+    if (auto vptr = std::get_if<value_index>(&self.result_)) [[likely]] {
+      return std::forward_like<decltype(self)>(*vptr);
+    }
+
+    if (auto eptr = std::get_if<exception_index>(&self.result_)) [[unlikely]] {
+      std::rethrow_exception(*eptr);
+    }
+
+    // mono
+    std::terminate();
+  }
+
+private:
+  static constexpr uint8_t empty_index = 0;
+  static constexpr uint8_t value_index = 1;
+  static constexpr uint8_t exception_index = 2;
+
+  std::variant<std::monostate, T, std::exception_ptr> result_;
+};
+
+template <> struct task_promise<void> : task_promise_base {
+  task<void> get_return_object();
+  void unhandled_exception() {
+    if (is_detached()) {
+      std::rethrow_exception(std::current_exception());
+    }
+    result_.template emplace<std::exception_ptr>(std::current_exception());
+  }
+
+  void set_detached() noexcept {
+    assert(std::holds_alternative<bool>(result_));
+    result_ = true;
+  }
+
+  bool is_detached() const noexcept {
+    if (auto bptr = std::get_if<bool>(&result_)) {
+      return *bptr;
+    }
+    return false;
+  }
+
+  void return_void() const {}
+
+  void result() const {
+    if (auto eptr = std::get_if<std::exception_ptr>(&result_)) [[unlikely]] {
+      std::rethrow_exception(*eptr);
+    }
+  }
+
+private:
+  std::variant<bool, std::exception_ptr> result_;
+};
+
+template <typename T> struct task_promise<T &> : task_promise_base {
+  task<T &> get_return_object();
+  void unhandled_exception() noexcept {
+    result_.template emplace<exception_index>(std::current_exception());
+  }
+
+  void return_value(T &value) noexcept { result_ = std::addressof(value); }
+
+  T &result() {
+    if (auto eptr = std::get_if<exception_index>(&result_)) [[unlikely]] {
+      std::rethrow_exception(*eptr);
+    }
+    return *std::get<pointer_index>(result_);
+  }
+
+private:
+  static constexpr uint8_t pointer_index = 0;
+  static constexpr uint8_t exception_index = 1;
+
+  std::variant<T *, std::exception_ptr> result_;
+};
+
+template <typename T = void> struct task {
+  using promise_type = task_promise<T>;
+  using handle_type = co_handle<promise_type>;
+
+  struct task_awaiter_base {
+    bool await_ready() noexcept { return !handle_ || handle_.done(); }
+    co_handle<> await_suspend(co_handle<> cont) {
+      handle_.promise().set_parent(cont);
+      return handle_;
+    }
+    static constexpr void await_resume() noexcept {}
+
+    co_handle<promise_type> handle_;
+  };
+
+  task() noexcept = default;
+  explicit task(co_handle<promise_type> handle) noexcept : handle_(handle) {}
+  ~task() {
+    if (handle_)
+      handle_.destroy();
+  }
+
+  task(task &&other) noexcept : handle_(std::exchange(other.handle_, nullptr)) {}
+  task &operator=(task &&other) noexcept {
+    if (this != &other) {
+      if (handle_)
+        handle_.destroy();
+      handle_ = std::exchange(other.handle_, nullptr);
+    }
+    return *this;
+  }
+
+  task(const task &) = delete;
+  task &operator=(const task &) = delete;
+
+  co_handle<promise_type> get_handle() noexcept { return handle_; }
+  void detach() {
+    if constexpr (std::is_void_v<T>) {
+      handle_.promise().set_detached();
+    }
+    handle_ = nullptr;
+  }
+  bool is_ready() noexcept { return !handle_ || handle_.done(); }
+  auto when_ready() { return task_awaiter_base{handle_}; }
+
+  auto operator co_await(this auto &&self) {
+    struct task_awaiter : task_awaiter_base {
+      decltype(auto) await_resume() {
+        return std::forward_like<decltype(self)>(this->handle_.promise()).result();
+      }
+    };
+    return task_awaiter{self.handle_};
+  }
+
+private:
+  co_handle<promise_type> handle_;
+};
+
+template <typename T> task<T> inline task_promise<T>::get_return_object() {
+  return task<T>{co_handle<task_promise>::from_promise(*this)};
+}
+
+task<void> inline task_promise<void>::get_return_object() {
+  return task<void>{co_handle<task_promise>::from_promise(*this)};
+}
+
+template <typename T> task<T &> inline task_promise<T &>::get_return_object() {
+  return task<T &>{co_handle<task_promise>::from_promise(*this)};
+}
+
+} // namespace mira::co
+
+#endif

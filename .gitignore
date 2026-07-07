@@ -1,0 +1,12 @@
+CMakeFiles
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+/test/bin
+/build*/
+/README.md
+/TODO/
+/docs/
+.cache/
+.vscode/
+compile_commands.json
