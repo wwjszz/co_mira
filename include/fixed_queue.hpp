@@ -8,8 +8,9 @@
 
 namespace mira {
 
-template <class T, std::unsigned_integral Cap_Type,
-          Cap_Type Cap = (Cap_Type(1) << (sizeof(Cap_Type) * 8 - 1))>
+template <typename T, std::unsigned_integral Cap_Type, Cap_Type Cap
+          // = (Cap_Type(1) << (sizeof(Cap_Type) * 8 - 1))
+          >
 struct fixed_queue {
   static_assert(std::has_single_bit(Cap));
 

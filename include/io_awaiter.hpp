@@ -38,7 +38,7 @@ struct linked_io_awaiter {
   void await_suspend(co_handle<> handle) const noexcept {
     last_io_awaiter->io_info.handle = handle;
   }
-  uint32_t await_resume() const noexcept { return last_io_awaiter->io_info.result; }
+  int32_t await_resume() const noexcept { return last_io_awaiter->io_info.result; }
 
   void set_link() noexcept { last_io_awaiter->set_link(); }
 

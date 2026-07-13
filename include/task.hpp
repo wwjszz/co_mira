@@ -174,6 +174,7 @@ template <typename T = void> struct task {
 
   co_handle<promise_type> get_handle() noexcept { return handle_; }
   void detach() {
+    static_assert(std::is_void_v<T> && "not support when T isn't void");
     if constexpr (std::is_void_v<T>) {
       handle_.promise().set_detached();
     }

@@ -22,7 +22,6 @@
 
 static constexpr int LISTEN_BACK_LOG = 32;
 static constexpr int BUF_SIZE = 256;
-static constexpr int DEPTH = 32;
 
 #define PRINTLN_ERROR(FORMAT_STRING, ...)                                                          \
   std::println(std::cerr, FORMAT_STRING __VA_OPT__(, ) __VA_ARGS__)

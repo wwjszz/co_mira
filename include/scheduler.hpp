@@ -21,8 +21,8 @@ struct scheduler_state {
                                   tuning::ready_queue_capacity_>;
   using queue_size_t = inner_queue::index_t;
 
-  constexpr scheduler_state() = default;
-  constexpr ~scheduler_state() {
+  scheduler_state() = default;
+  ~scheduler_state() {
     if (initialized_) {
       io_uring_queue_exit(&ring_);
       initialized_ = false;
