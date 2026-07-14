@@ -10,6 +10,7 @@
 #include <iostream>
 #include <liburing.h>
 #include <netdb.h>
+#include <print>
 #include <queue>
 #include <string>
 #include <sys/socket.h>
@@ -179,8 +180,10 @@ int main(int argc, char *argv[]) {
 
   scheduler sche;
   sche.co_spawn(server(sche, s_fd));
+  sche.start();
 
-  sche.run();
+  std::println(std::cout, "sche.start back");
+  sche.join();
 
   return 0;
 }

@@ -49,7 +49,7 @@ public:
   static constexpr std::suspend_always initial_suspend() noexcept { return {}; }
   static constexpr final_awaiter final_suspend() noexcept { return {}; }
   std::suspend_always yield_value(Yielded val) noexcept {
-    bottom_value() = std::addressof(val);
+    this->bottom_value() = std::addressof(val);
     return {};
   }
 
@@ -58,7 +58,7 @@ public:
     requires std::is_rvalue_reference_v<Yielded> &&
              std::constructible_from<yielded_decvref, const yielded_deref &>
   {
-    return copy_awaiter{val, bottom_value()};
+    return copy_awaiter{val, this->bottom_value()};
   }
 
   template <typename R2, typename V2>
@@ -76,7 +76,8 @@ public:
         co_yield static_cast<Yielded>(*i);
       }
     };
-    return yield_value(elements_of{n(std::ranges::begin(r.range), std::ranges::end(r.range))});
+    return this->yield_value(
+        elements_of{n(std::ranges::begin(r.range), std::ranges::end(r.range))});
   }
 
   void unhandled_exception() {
@@ -90,8 +91,8 @@ public:
   void return_void() const noexcept {}
 
 private:
-  value_ptr &bottom_value() noexcept { return state_.bottom_value(); }
-  value_ptr &value() noexcept { return state_.value(); }
+  value_ptr &bottom_value() noexcept { return this->state_.bottom_value(); }
+  value_ptr &value() noexcept { return this->state_.value(); }
 
   subyield_state state_;
   std::exception_ptr except_;
@@ -162,7 +163,10 @@ template <typename Yielded> struct promise_erased<Yielded>::copy_awaiter {
   value_ptr &bottom_val_;
 
   static constexpr bool await_ready() noexcept { return false; }
-  void await_suspend(std::coroutine_handle<>) noexcept { this->bottom_val_ = std::addressof(val_); }
+  template <typename Promise> void await_suspend(std::coroutine_handle<Promise>) noexcept {
+    static_assert(std::is_pointer_interconvertible_base_of_v<promise_erased, Promise>);
+    this->bottom_val_ = std::addressof(val_);
+  }
   static constexpr void await_resume() noexcept {}
 };
 
@@ -171,10 +175,13 @@ template <typename Gen>
 struct promise_erased<Yielded>::recursive_awatier {
   Gen gen_;
 
-  recursive_awatier(Gen gen) noexcept : gen_(std::move(gen)) { gen_.mark_as_started(); }
+  recursive_awatier(Gen gen) noexcept : gen_(std::move(gen)) { this->gen_.mark_as_started(); }
 
   static constexpr bool await_ready() noexcept { return false; }
   template <typename Promise> co_handle await_suspend(std::coroutine_handle<Promise> p) noexcept {
+
+    static_assert(std::is_pointer_interconvertible_base_of_v<promise_erased, Promise>);
+
     auto c = co_handle::from_address(p.address());
     auto s = co_handle::from_address(this->gen_.coro_.address());
     c.promise().state_.push(c, s);
@@ -191,6 +198,7 @@ template <typename Yielded> struct promise_erased<Yielded>::final_awaiter {
   static constexpr bool await_ready() noexcept { return false; }
   template <typename Promise>
   std::coroutine_handle<> await_suspend(std::coroutine_handle<Promise> p) noexcept {
+    static_assert(std::is_pointer_interconvertible_base_of_v<promise_erased, Promise>);
     return p.promise().state_.pop();
   }
   static constexpr void await_resume() noexcept {}
@@ -204,8 +212,6 @@ class generator : public std::ranges::view_interface<generator<Ref, Val>> {
 
   using Value = std::conditional_t<std::is_void_v<Val>, std::remove_cvref_t<Ref>, Val>;
   using Reference = reference_t<Ref, Val>;
-
-  // TODO: Required to model indirectly_readable, and input_iterator
 
   using Yielded = yield_t<Reference>;
   using Erased_promise = core::gen::promise_erased<Yielded>;
@@ -246,6 +252,8 @@ public:
     }
   };
 
+  static_assert(std::is_pointer_interconvertible_base_of_v<Erased_promise, promise_type>);
+
 private:
   void mark_as_started() noexcept {
     assert(!begin_);
@@ -276,9 +284,11 @@ template <typename Ref, typename Val> struct generator<Ref, Val>::Iterator {
 
   void operator++(int) { this->operator++(); }
 
-  Reference operator*() const { return static_cast<Reference>(*coro_.promise().state_.value()); }
+  Reference operator*() const {
+    return static_cast<Reference>(*this->coro_.promise().state_.value());
+  }
 
-  void next() { coro_.promise().state_.top().resume(); }
+  void next() { this->coro_.promise().state_.top().resume(); }
 
 private:
   friend class generator;

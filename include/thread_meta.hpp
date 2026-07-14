@@ -1,8 +1,11 @@
 #ifndef CO_MIRA_THREAD_META_HPP
 #define CO_MIRA_THREAD_META_HPP
 
-namespace mira::co::core {
-struct scheduler;
+namespace mira::co {
+class scheduler;
+
+namespace core {
+
 struct scheduler_state;
 
 struct thread_meta {
@@ -11,7 +14,7 @@ struct thread_meta {
 };
 
 inline thread_local thread_meta this_thread{};
-
-} // namespace mira::co::core
+} // namespace core
+} // namespace mira::co
 
 #endif

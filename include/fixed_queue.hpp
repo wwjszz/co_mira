@@ -4,7 +4,10 @@
 #include <bit>
 #include <cassert>
 #include <concepts>
+#include <exception>
 #include <limits>
+#include <type_traits>
+#include <utility>
 
 namespace mira {
 
@@ -18,40 +21,46 @@ struct fixed_queue {
 
   static constexpr Cap_Type mask = Cap - 1;
 
-  constexpr index_t head() const noexcept { return head_; }
-  constexpr index_t tail() const noexcept { return tail_; }
-  constexpr bool empty() const noexcept { return head_ == tail_; }
-  constexpr bool full() const noexcept { return next_tail() == head_; }
-  constexpr index_t size() const noexcept { return (tail_ - head_ + Cap) & mask; }
+  constexpr index_t head() const noexcept { return this->head_; }
+  constexpr index_t tail() const noexcept { return this->tail_; }
+  constexpr bool empty() const noexcept { return this->head_ == this->tail_; }
+  constexpr bool full() const noexcept { return next_tail() == this->head_; }
+  constexpr index_t size() const noexcept { return (this->tail_ - this->head_ + Cap) & this->mask; }
 
   constexpr index_t advance_tail() noexcept {
-    index_t cur_tail = tail_;
-    tail_ = next_tail();
+    index_t cur_tail = this->tail_;
+    this->tail_ = next_tail();
     return cur_tail;
   }
 
   constexpr index_t advance_head() noexcept {
-    index_t cur_head = head_;
-    head_ = next_head();
+    index_t cur_head = this->head_;
+    this->head_ = next_head();
     return cur_head;
   }
 
-  constexpr index_t next_tail() const noexcept { return (tail_ + 1) & mask; }
-  constexpr index_t next_head() const noexcept { return (head_ + 1) & mask; }
+  constexpr index_t next_tail() const noexcept { return (this->tail_ + 1) & this->mask; }
+  constexpr index_t next_head() const noexcept { return (this->head_ + 1) & this->mask; }
 
-  constexpr void push(T &ele) {
-    assert(!full() && "fixed_queue is full");
-    array_[advance_tail()] = ele;
+  template <typename Value>
+  [[nodiscard]] constexpr bool
+  try_push(Value &&val) noexcept(std::is_nothrow_assignable_v<T &, Value &&>) {
+    if (full()) [[unlikely]]
+      return false;
+
+    this->array_[this->advance_tail()] = std::forward<Value>(val);
+    return true;
   }
 
-  constexpr void push(T &&ele) {
-    assert(!full() && "fixed_queue is full");
-    array_[advance_tail()] = std::move(ele);
+  template <typename Value>
+  constexpr void push(Value &&val) noexcept(noexcept(this->try_push(std::forward<Value>(val)))) {
+    if (!this->try_push(std::forward<Value>(val)))
+      std::terminate();
   }
 
   constexpr T pop() {
-    assert(!empty() && "fixed_queue is empty");
-    return array_[advance_head()];
+    assert(!this->empty() && "fixed_queue is empty");
+    return this->array_[this->advance_head()];
   }
 
 private:

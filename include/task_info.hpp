@@ -20,7 +20,7 @@ static_assert(alignof(task_info) == 8);
 
 inline constexpr uint64_t task_info_mask = ~static_cast<uint64_t>(alignof(task_info) - 1);
 
-task_info *task_info::from_user_data(uint64_t user_data) noexcept {
+inline task_info *task_info::from_user_data(uint64_t user_data) noexcept {
   return reinterpret_cast<task_info *>(user_data & task_info_mask);
 }
 
