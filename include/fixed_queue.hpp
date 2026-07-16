@@ -21,26 +21,20 @@ struct fixed_queue {
 
   static constexpr Cap_Type mask = Cap - 1;
 
-  constexpr index_t head() const noexcept { return this->head_; }
-  constexpr index_t tail() const noexcept { return this->tail_; }
-  constexpr bool empty() const noexcept { return this->head_ == this->tail_; }
-  constexpr bool full() const noexcept { return next_tail() == this->head_; }
-  constexpr index_t size() const noexcept { return (this->tail_ - this->head_ + Cap) & this->mask; }
-
-  constexpr index_t advance_tail() noexcept {
-    index_t cur_tail = this->tail_;
-    this->tail_ = next_tail();
-    return cur_tail;
+  [[nodiscard]] constexpr index_t head() const noexcept { return this->head_; }
+  [[nodiscard]] constexpr index_t tail() const noexcept { return this->tail_; }
+  [[nodiscard]] constexpr bool empty() const noexcept { return this->head_ == this->tail_; }
+  [[nodiscard]] constexpr bool full() const noexcept { return next_tail() == this->head_; }
+  [[nodiscard]] constexpr index_t size() const noexcept {
+    return (this->tail_ - this->head_ + Cap) & this->mask;
   }
 
-  constexpr index_t advance_head() noexcept {
-    index_t cur_head = this->head_;
-    this->head_ = next_head();
-    return cur_head;
+  [[nodiscard]] constexpr index_t next_tail() const noexcept {
+    return (this->tail_ + 1) & this->mask;
   }
-
-  constexpr index_t next_tail() const noexcept { return (this->tail_ + 1) & this->mask; }
-  constexpr index_t next_head() const noexcept { return (this->head_ + 1) & this->mask; }
+  [[nodiscard]] constexpr index_t next_head() const noexcept {
+    return (this->head_ + 1) & this->mask;
+  }
 
   template <typename Value>
   [[nodiscard]] constexpr bool
@@ -58,12 +52,24 @@ struct fixed_queue {
       std::terminate();
   }
 
-  constexpr T pop() {
+  [[nodiscard]] constexpr T pop() {
     assert(!this->empty() && "fixed_queue is empty");
     return this->array_[this->advance_head()];
   }
 
 private:
+  [[nodiscard]] constexpr index_t advance_tail() noexcept {
+    index_t cur_tail = this->tail_;
+    this->tail_ = next_tail();
+    return cur_tail;
+  }
+
+  [[nodiscard]] constexpr index_t advance_head() noexcept {
+    index_t cur_head = this->head_;
+    this->head_ = next_head();
+    return cur_head;
+  }
+
   index_t head_ = 0;
   index_t tail_ = 0;
   std::array<T, Cap> array_;

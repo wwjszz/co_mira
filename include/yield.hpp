@@ -7,7 +7,7 @@
 
 namespace mira::co {
 namespace core {
-struct yield_awaiter {
+struct [[nodiscard]] yield_awaiter {
   static constexpr bool await_ready() noexcept { return false; }
   static constexpr void await_suspend(co_handle<> handle) {
     this_thread.sche_state->push_handle(handle);

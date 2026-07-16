@@ -181,8 +181,6 @@ int main(int argc, char *argv[]) {
   scheduler sche;
   sche.co_spawn(server(sche, s_fd));
   sche.start();
-
-  std::println(std::cout, "sche.start back");
   sche.join();
 
   return 0;

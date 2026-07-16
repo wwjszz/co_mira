@@ -208,7 +208,7 @@ template <typename Yielded> struct promise_erased<Yielded>::final_awaiter {
 
 // TODO: add allocator
 template <typename Ref, typename Val>
-class generator : public std::ranges::view_interface<generator<Ref, Val>> {
+class [[nodiscard]] generator : public std::ranges::view_interface<generator<Ref, Val>> {
 
   using Value = std::conditional_t<std::is_void_v<Val>, std::remove_cvref_t<Ref>, Val>;
   using Reference = reference_t<Ref, Val>;
@@ -237,14 +237,14 @@ public:
     return *this;
   }
 
-  Iterator begin() {
+  [[nodiscard]] Iterator begin() {
     this->mark_as_started();
     auto h = coro_handle::from_promise(this->coro_.promise());
     h.promise().state_.top() = h;
     return {h};
   }
 
-  auto end() const noexcept { return std::default_sentinel; }
+  [[nodiscard]] auto end() const noexcept { return std::default_sentinel; }
 
   struct promise_type : Erased_promise {
     generator get_return_object() noexcept {
@@ -284,7 +284,7 @@ template <typename Ref, typename Val> struct generator<Ref, Val>::Iterator {
 
   void operator++(int) { this->operator++(); }
 
-  Reference operator*() const {
+  [[nodiscard]] Reference operator*() const {
     return static_cast<Reference>(*this->coro_.promise().state_.value());
   }
 

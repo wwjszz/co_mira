@@ -16,7 +16,7 @@ struct task_promise_base;
 template <typename T> struct task_promise;
 template <typename T> struct task;
 
-struct final_awaiter {
+struct [[nodiscard]] final_awaiter {
   static constexpr bool await_ready() noexcept { return false; }
   template <std::derived_from<task_promise_base> Promise>
   co_handle<> await_suspend(co_handle<Promise> cont) noexcept {
@@ -49,7 +49,7 @@ private:
   co_handle<> parent_coro_{};
 };
 
-template <typename T> struct task_promise : task_promise_base {
+template <typename T> struct [[nodiscard]] task_promise : task_promise_base {
   task<T> get_return_object();
   void unhandled_exception() noexcept {
     this->result_.template emplace<exception_index>(std::current_exception());
@@ -59,7 +59,7 @@ template <typename T> struct task_promise : task_promise_base {
     this->result_.template emplace<value_index>(std::forward<Value>(value));
   }
 
-  auto &&result(this auto &&self) {
+  [[nodiscard]] auto &&result(this auto &&self) {
     if (auto vptr = std::get_if<value_index>(&self.result_)) [[likely]] {
       return std::forward_like<decltype(self)>(*vptr);
     }
@@ -80,7 +80,7 @@ private:
   std::variant<std::monostate, T, std::exception_ptr> result_;
 };
 
-template <> struct task_promise<void> : task_promise_base {
+template <> struct [[nodiscard]] task_promise<void> : task_promise_base {
   task<void> get_return_object();
   void unhandled_exception() noexcept { this->except_ = std::current_exception(); }
   void return_void() const {}
@@ -94,7 +94,7 @@ private:
   std::exception_ptr except_;
 };
 
-template <typename T> struct task_promise<T &> : task_promise_base {
+template <typename T> struct [[nodiscard]] task_promise<T &> : task_promise_base {
   task<T &> get_return_object();
   void unhandled_exception() noexcept {
     this->result_.template emplace<exception_index>(std::current_exception());
@@ -102,7 +102,7 @@ template <typename T> struct task_promise<T &> : task_promise_base {
 
   void return_value(T &value) noexcept { this->result_ = std::addressof(value); }
 
-  T &result() const {
+  [[nodiscard]] T &result() const {
     if (auto eptr = std::get_if<exception_index>(&this->result_)) [[unlikely]] {
       std::rethrow_exception(*eptr);
     }
@@ -149,7 +149,7 @@ template <typename T = void> struct [[nodiscard]] task {
   task(const task &) = delete;
   task &operator=(const task &) = delete;
 
-  co_handle<promise_type> get_handle() noexcept { return this->handle_; }
+  [[nodiscard]] co_handle<promise_type> get_handle() noexcept { return this->handle_; }
 
   [[nodiscard]] bool is_ready() noexcept { return !this->handle_ || this->handle_.done(); }
   auto when_ready() { return task_awaiter_base{this->handle_}; }
