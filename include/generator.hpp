@@ -10,6 +10,7 @@
 #include <exception>
 #include <memory>
 #include <ranges>
+#include <stdexcept>
 #include <type_traits>
 #include <utility>
 #include <variant>
@@ -265,7 +266,8 @@ public:
 
 private:
   void mark_as_started() noexcept {
-    assert(!begin_);
+    if (this->begin_) [[unlikely]]
+      std::logic_error("generator::begin called more than once");
     this->begin_ = true;
   }
 

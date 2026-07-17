@@ -3,6 +3,7 @@
 
 #include "co_mira.hpp"
 #include "fixed_queue.hpp"
+#include "log.hpp"
 #include "task.hpp"
 #include "task_info.hpp"
 #include "thread_meta.hpp"
@@ -12,9 +13,7 @@
 #include <cerrno>
 #include <coroutine>
 #include <exception>
-#include <iostream>
 #include <liburing.h>
-#include <print>
 #include <thread>
 
 namespace mira::co {
@@ -77,36 +76,32 @@ struct scheduler_state {
 
   scheduler_state() = default;
   ~scheduler_state() {
-    this->destroy_all_handle();
     if (this->initialized_) {
-      // if (!ready_queue_.empty()) {
-      //   std::terminate();
-      // }
       this_thread.sche_state = nullptr;
+      this_thread.sche = nullptr;
       io_uring_queue_exit(&this->ring_);
       this->initialized_ = false;
     }
   }
 
-  void init(unsigned entries) noexcept;
+  void init(unsigned entries);
   [[nodiscard]] queue_size_t size() const noexcept;
-  void push_handle(co_handle<> handle) noexcept;
+  void push_handle(co_handle<> handle);
   void co_spawn(co_handle<> handle) noexcept;
 
   [[nodiscard]] constexpr bool has_task_ready() const noexcept;
-  [[nodiscard]] io_uring_sqe *get_free_sqe() noexcept;
-  void wait_uring() noexcept;
+  [[nodiscard]] io_uring_sqe *get_free_sqe();
+  void wait_uring();
   [[nodiscard]] bool peek_uring() noexcept;
-  void handle_cqe(io_uring_cqe *cqe) noexcept;
+  void handle_cqe(io_uring_cqe *cqe);
 
-  [[nodiscard]] co_handle<> get_handle() noexcept;
-  void resume_handle() noexcept;
+  void resume_handle();
 
-  void flush_submissions() noexcept;
-  [[nodiscard]] uint32_t reap_completions() noexcept;
+  void flush_submissions();
+  [[nodiscard]] uint32_t reap_completions();
 
   [[nodiscard]] unsigned submit_ready_count() noexcept;
-  void ensure_sq_space(unsigned required) noexcept;
+  void ensure_sq_space(unsigned required);
 
   void destroy_all_handle() noexcept;
 
@@ -132,10 +127,12 @@ public:
   ~scheduler() {
     if (this->cur_state_ == STATE::STARTED) {
       this->join();
+    } else if (this->state_.has_task_ready()) {
+      this->state_.destroy_all_handle();
     }
   }
 
-  void co_spawn(task<void> &&item) noexcept;
+  void co_spawn(task<void> &&item);
   void start();
   void join();
 
@@ -172,10 +169,10 @@ private:
 };
 
 namespace core {
-inline void scheduler_state::init(unsigned entries) noexcept {
+inline void scheduler_state::init(unsigned entries) {
   int ret = io_uring_queue_init(entries, &this->ring_, 0);
-  if (ret != 0)
-    std::terminate();
+  if (ret != 0) [[unlikely]]
+    throw_uring_error(-ret, "io_uring_queue_init");
   this->initialized_ = true;
   this_thread.sche_state = this;
 }
@@ -184,10 +181,7 @@ inline scheduler_state::queue_size_t scheduler_state::size() const noexcept {
   return this->ready_queue_.size();
 }
 
-inline void scheduler_state::push_handle(co_handle<> handle) noexcept {
-  assert(handle && "push an empty task");
-  this->ready_queue_.push(handle);
-}
+inline void scheduler_state::push_handle(co_handle<> handle) { this->ready_queue_.push(handle); }
 
 inline void scheduler_state::co_spawn(co_handle<> handle) noexcept { this->push_handle(handle); }
 
@@ -195,22 +189,35 @@ inline constexpr bool scheduler_state::has_task_ready() const noexcept {
   return !this->ready_queue_.empty();
 }
 
-inline io_uring_sqe *scheduler_state::get_free_sqe() noexcept {
+inline io_uring_sqe *scheduler_state::get_free_sqe() {
   io_uring_sqe *sqe = io_uring_get_sqe(&this->ring_);
   if (sqe == nullptr) [[unlikely]] {
-    std::terminate();
+    // TODO: ensure more space when crowed
+    this->ensure_sq_space(1);
+    sqe = io_uring_get_sqe(&this->ring_);
+    if (sqe == nullptr) [[unlikely]]
+      throw std::runtime_error("failed to acquire SQE");
   }
 
   ++this->need_to_reap_;
   return sqe;
 }
 
-inline void scheduler_state::wait_uring() noexcept {
+inline void scheduler_state::wait_uring() {
   io_uring_cqe *_;
-  int res = io_uring_wait_cqe(&this->ring_, &_);
-  if (res < 0) [[unlikely]] {
-    std::terminate();
+  int res;
+
+  for (;;) {
+    res = io_uring_wait_cqe(&this->ring_, &_);
+
+    if (res == -EINTR) [[unlikely]]
+      continue;
+
+    break;
   }
+
+  if (res < 0) [[unlikely]]
+    throw_uring_error(-res, "io_uring_wait_cqe");
 }
 
 inline bool scheduler_state::peek_uring() noexcept {
@@ -219,7 +226,7 @@ inline bool scheduler_state::peek_uring() noexcept {
   return cqe != nullptr;
 }
 
-inline void scheduler_state::handle_cqe(io_uring_cqe *cqe) noexcept {
+inline void scheduler_state::handle_cqe(io_uring_cqe *cqe) {
   --this->need_to_reap_;
 
   const int32_t result = cqe->res;
@@ -229,7 +236,6 @@ inline void scheduler_state::handle_cqe(io_uring_cqe *cqe) noexcept {
 
   using utype = user_data::type;
   auto [info, type] = data.from_user_data();
-  assert(type < utype::unknown);
 
   switch (type) {
   [[likely]] case utype::task_info_pointer:
@@ -242,33 +248,36 @@ inline void scheduler_state::handle_cqe(io_uring_cqe *cqe) noexcept {
     break;
 
   [[unlikely]] case utype::unknown:
-    assert(false && "handle_cqe: unknown case");
+    log("handle_cqe: unknown case");
+    std::terminate();
     break;
   }
 }
 
-inline co_handle<> scheduler_state::get_handle() noexcept {
-  assert(!this->ready_queue_.empty());
-  return this->ready_queue_.pop();
-}
-
-inline void scheduler_state::resume_handle() noexcept {
-  assert(!this->ready_queue_.empty());
+inline void scheduler_state::resume_handle() {
   co_handle<> task = this->ready_queue_.pop();
   task.resume();
 }
 
-inline void scheduler_state::flush_submissions() noexcept {
+inline void scheduler_state::flush_submissions() {
   if (io_uring_sq_ready(&this->ring_)) [[likely]] {
-    int res = io_uring_submit_and_wait(&this->ring_, !this->has_task_ready());
-    // TODO: handle error when res < 0
-    if (res < 0) {
-      std::terminate();
+    int res;
+
+    for (;;) {
+      res = io_uring_submit_and_wait(&this->ring_, !this->has_task_ready());
+
+      if (res == -EINTR) [[unlikely]]
+        continue;
+
+      break;
     }
+
+    if (res < 0) [[unlikely]]
+      throw_uring_error(-res, "io_uring_submit_and_wait");
   }
 }
 
-inline uint32_t scheduler_state::reap_completions() noexcept {
+inline uint32_t scheduler_state::reap_completions() {
   io_uring_cqe *cqe;
   unsigned head, count = 0;
   io_uring_for_each_cqe(&this->ring_, head, cqe) {
@@ -283,19 +292,25 @@ inline unsigned scheduler_state::submit_ready_count() noexcept {
   return io_uring_sq_ready(&this->ring_);
 }
 
-inline void scheduler_state::ensure_sq_space(unsigned required) noexcept {
+inline void scheduler_state::ensure_sq_space(unsigned required) {
   unsigned sq_entries_ = this->ring_.sq.ring_entries;
   if (sq_entries_ < required) [[unlikely]]
-    std::terminate();
+    throw std::length_error("required sq entries exceeds SQ capacity");
 
   while (io_uring_sq_space_left(&this->ring_) < required) {
     int res = 0;
-    do {
+
+    for (;;) {
       res = io_uring_submit(&this->ring_);
-    } while (res == -EINTR);
+
+      if (res == -EINTR) [[unlikely]]
+        continue;
+
+      break;
+    }
 
     if (res < 0) [[unlikely]]
-      std::terminate();
+      throw_uring_error(-res, "io_uring_submit");
   }
 }
 
@@ -318,6 +333,10 @@ inline detached_task run_detached(scheduler &sche, task<void> item) noexcept {
   } catch (...) {
     sche.report_exception(std::current_exception());
   }
+
+#ifdef CO_MIRA_ENABLE_COUNTERS
+  ::mira::co::handle_counter.decrement();
+#endif
 }
 
 } // namespace core
@@ -329,8 +348,7 @@ inline void scheduler::init() noexcept {
 
 inline void scheduler::start() {
   if (this->cur_state_ != STATE::CREATED && this->cur_state_ != STATE::SPAWNED) {
-    std::println(std::cout, "start");
-    std::terminate();
+    throw std::logic_error("invalid scheduler state for start");
   }
 
   if (this->cur_state_ == STATE::SPAWNED) {
@@ -351,8 +369,7 @@ inline void scheduler::start() {
 
 inline void scheduler::join() {
   if (this->cur_state_ != STATE::STARTED) {
-    std::println(std::cout, "join");
-    std::terminate();
+    throw std::logic_error("invalid scheduler state for join");
   }
   if (host_thread_.joinable())
     host_thread_.join();
@@ -362,19 +379,17 @@ inline void scheduler::join() {
 inline void scheduler::run() {
   while (!this->is_stop) [[likely]] {
     this->resume_ready_task();
-
     this->flush_submissions();
-
     this->reap_completions();
   }
 }
 
 // co_spawn must before start
-inline void scheduler::co_spawn(task<void> &&item) noexcept {
+inline void scheduler::co_spawn(task<void> &&item) {
   if (this->cur_state_ == STATE::CREATED || this->cur_state_ == STATE::SPAWNED) {
     this->cur_state_ = STATE::SPAWNED;
   } else if (this->cur_state_ != STATE::STARTED || core::this_thread.sche != this) {
-    std::terminate();
+    throw std::logic_error("invalid scheduler state for co_spawn");
   }
   auto dt = this->run_detached(std::move(item));
   this->state_.push_handle(dt.release());

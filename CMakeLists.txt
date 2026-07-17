@@ -1,6 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
 
 project(co_mira LANGUAGES CXX)
+include(CTest)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -30,7 +31,7 @@ target_compile_definitions(
 )
 
 set(TEST_BIN_DIR
-    "${PROJECT_SOURCE_DIR}/test/bin")
+    "${PROJECT_BINARY_DIR}/test/bin")
 
 file(MAKE_DIRECTORY
      "${TEST_BIN_DIR}")
@@ -54,6 +55,19 @@ foreach(TEST_SOURCE IN LISTS TEST_SOURCES)
     "${TEST_NAME}"
     "${TEST_SOURCE}"
   )
+
+  if(BUILD_TESTING AND TEST_NAME MATCHES "^test_")
+  add_test(
+    NAME "${TEST_NAME}"
+    COMMAND "$<TARGET_FILE:${TEST_NAME}>"
+  )
+
+  set_tests_properties(
+    "${TEST_NAME}"
+    PROPERTIES
+      WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}"
+  )
+endif()
 
   target_link_libraries(
     "${TEST_NAME}"

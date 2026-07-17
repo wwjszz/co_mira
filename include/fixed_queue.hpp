@@ -5,16 +5,13 @@
 #include <cassert>
 #include <concepts>
 #include <exception>
-#include <limits>
+#include <stdexcept>
 #include <type_traits>
 #include <utility>
 
 namespace mira {
 
-template <typename T, std::unsigned_integral Cap_Type, Cap_Type Cap
-          // = (Cap_Type(1) << (sizeof(Cap_Type) * 8 - 1))
-          >
-struct fixed_queue {
+template <typename T, std::unsigned_integral Cap_Type, Cap_Type Cap> struct fixed_queue {
   static_assert(std::has_single_bit(Cap));
 
   using index_t = Cap_Type;
@@ -46,14 +43,14 @@ struct fixed_queue {
     return true;
   }
 
-  template <typename Value>
-  constexpr void push(Value &&val) noexcept(noexcept(this->try_push(std::forward<Value>(val)))) {
-    if (!this->try_push(std::forward<Value>(val)))
-      std::terminate();
+  template <typename Value> constexpr void push(Value &&val) {
+    if (!this->try_push(std::forward<Value>(val))) [[unlikely]]
+      throw std::length_error("fixed_queue is full");
   }
 
   [[nodiscard]] constexpr T pop() {
-    assert(!this->empty() && "fixed_queue is empty");
+    if (this->empty()) [[unlikely]]
+      throw std::out_of_range("fixed_queue is empty");
     return this->array_[this->advance_head()];
   }
 
