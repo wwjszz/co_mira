@@ -1,6 +1,6 @@
 #ifndef CO_MIRA_TASK_HPP
 #define CO_MIRA_TASK_HPP
-#include "co_mira.h"
+#include "co_mira.hpp"
 
 #include <cassert>
 #include <concepts>
@@ -134,8 +134,12 @@ template <typename T = void> struct [[nodiscard]] task {
   };
 
   ~task() {
-    if (auto &h = this->handle_)
+    if (auto &h = this->handle_) {
+#ifdef CO_MIRA_ENABLE_COUNTERS
+      ::mira::co::handle_counter.decrement();
+#endif
       h.destroy();
+    }
   }
 
   task(task &&other) noexcept : handle_(std::exchange(other.handle_, nullptr)) {}
@@ -170,14 +174,23 @@ private:
 };
 
 template <typename T> task<T> inline task_promise<T>::get_return_object() {
+#ifdef CO_MIRA_ENABLE_COUNTERS
+  ::mira::co::handle_counter.increment();
+#endif
   return task<T>{co_handle<task_promise>::from_promise(*this)};
 }
 
 task<void> inline task_promise<void>::get_return_object() {
+#ifdef CO_MIRA_ENABLE_COUNTERS
+  ::mira::co::handle_counter.increment();
+#endif
   return task<void>{co_handle<task_promise>::from_promise(*this)};
 }
 
 template <typename T> task<T &> inline task_promise<T &>::get_return_object() {
+#ifdef CO_MIRA_ENABLE_COUNTERS
+  ::mira::co::handle_counter.increment();
+#endif
   return task<T &>{co_handle<task_promise>::from_promise(*this)};
 }
 

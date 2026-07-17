@@ -1,6 +1,6 @@
 #ifndef CO_MIRA_TASK_INFO_HPP
 #define CO_MIRA_TASK_INFO_HPP
-#include "co_mira.h"
+#include "co_mira.hpp"
 
 #include <cstdint>
 

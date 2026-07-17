@@ -1,7 +1,7 @@
 #ifndef CO_MIRA_SCHEDULER_HPP
 #define CO_MIRA_SCHEDULER_HPP
 
-#include "co_mira.h"
+#include "co_mira.hpp"
 #include "fixed_queue.hpp"
 #include "task.hpp"
 #include "task_info.hpp"
@@ -24,7 +24,12 @@ class scheduler;
 namespace core {
 struct [[nodiscard]] detached_task {
   struct promise_type {
-    detached_task get_return_object() { return {co_handle<promise_type>::from_promise(*this)}; }
+    detached_task get_return_object() {
+#ifdef CO_MIRA_ENABLE_COUNTERS
+      ::mira::co::handle_counter.increment();
+#endif
+      return {co_handle<promise_type>::from_promise(*this)};
+    }
     static constexpr std::suspend_always initial_suspend() noexcept { return {}; }
     static constexpr std::suspend_never final_suspend() noexcept { return {}; }
     static constexpr void return_void() noexcept {}
@@ -35,8 +40,12 @@ struct [[nodiscard]] detached_task {
   detached_task(handle_type handle) noexcept : handle_(handle) {}
 
   ~detached_task() {
-    if (auto &handle = this->handle_)
+    if (auto &handle = this->handle_) {
+#ifdef CO_MIRA_ENABLE_COUNTERS
+      ::mira::co::handle_counter.decrement();
+#endif
       handle.destroy();
+    }
   }
 
   detached_task(detached_task &&other) noexcept : handle_(std::exchange(other.handle_, nullptr)) {}
@@ -294,8 +303,12 @@ inline void scheduler_state::destroy_all_handle() noexcept {
   auto &r = this->ready_queue_;
   for (unsigned sz = r.size(); sz; --sz) {
     co_handle<> handle = r.pop();
-    if (handle)
+    if (handle) {
+#ifdef CO_MIRA_ENABLE_COUNTERS
+      ::mira::co::handle_counter.decrement();
+#endif
       handle.destroy();
+    }
   }
 }
 

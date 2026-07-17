@@ -1,7 +1,7 @@
 #ifndef CO_MIRA_YIELD_HPP
 #define CO_MIRA_YIELD_HPP
 
-#include "co_mira.h"
+#include "co_mira.hpp"
 #include "scheduler.hpp"
 #include "thread_meta.hpp"
 

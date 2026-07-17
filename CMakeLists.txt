@@ -1,26 +1,87 @@
 cmake_minimum_required(VERSION 3.20)
+
 project(co_mira LANGUAGES CXX)
+
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
-set(TEST_BIN_DIR "${PROJECT_SOURCE_DIR}/test/bin")
-file(MAKE_DIRECTORY "${TEST_BIN_DIR}")
-file(GLOB TEST_SOURCES CONFIGURE_DEPENDS
-  "${PROJECT_SOURCE_DIR}/test/*.cc"
-  "${PROJECT_SOURCE_DIR}/test/*.cpp"
-  "${PROJECT_SOURCE_DIR}/test/*.cxx"
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+# Header-only co_mira library.
+add_library(co_mira INTERFACE)
+
+target_include_directories(
+  co_mira
+  INTERFACE
+    "${PROJECT_SOURCE_DIR}/include"
 )
-foreach(TEST_SOURCE ${TEST_SOURCES})
-  get_filename_component(TEST_NAME "${TEST_SOURCE}" NAME_WE)
-  add_executable("${TEST_NAME}" "${TEST_SOURCE}")
-  target_include_directories("${TEST_NAME}" PRIVATE "${PROJECT_SOURCE_DIR}/include")
-  target_compile_options("${TEST_NAME}" PRIVATE -O3 -Wall)
-  target_link_libraries("${TEST_NAME}" PRIVATE uring)
-  set_target_properties("${TEST_NAME}" PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY "${TEST_BIN_DIR}"
-    RUNTIME_OUTPUT_DIRECTORY_DEBUG "${TEST_BIN_DIR}"
-    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${TEST_BIN_DIR}"
-    RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO "${TEST_BIN_DIR}"
-    RUNTIME_OUTPUT_DIRECTORY_MINSIZEREL "${TEST_BIN_DIR}"
+
+target_link_libraries(
+  co_mira
+  INTERFACE
+    uring
+)
+
+# Enable internal counters only in Debug builds.
+target_compile_definitions(
+  co_mira
+  INTERFACE
+    $<$<CONFIG:Debug>:CO_MIRA_ENABLE_COUNTERS>
+)
+
+set(TEST_BIN_DIR
+    "${PROJECT_SOURCE_DIR}/test/bin")
+
+file(MAKE_DIRECTORY
+     "${TEST_BIN_DIR}")
+
+file(
+  GLOB TEST_SOURCES
+  CONFIGURE_DEPENDS
+    "${PROJECT_SOURCE_DIR}/test/*.cc"
+    "${PROJECT_SOURCE_DIR}/test/*.cpp"
+    "${PROJECT_SOURCE_DIR}/test/*.cxx"
+)
+
+foreach(TEST_SOURCE IN LISTS TEST_SOURCES)
+  get_filename_component(
+    TEST_NAME
+    "${TEST_SOURCE}"
+    NAME_WE
+  )
+
+  add_executable(
+    "${TEST_NAME}"
+    "${TEST_SOURCE}"
+  )
+
+  target_link_libraries(
+    "${TEST_NAME}"
+    PRIVATE
+      co_mira
+  )
+
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(
+      "${TEST_NAME}"
+      PRIVATE
+        -Wall
+        -Wextra
+    )
+  endif()
+
+  set_target_properties(
+    "${TEST_NAME}"
+    PROPERTIES
+      RUNTIME_OUTPUT_DIRECTORY
+        "${TEST_BIN_DIR}"
+      RUNTIME_OUTPUT_DIRECTORY_DEBUG
+        "${TEST_BIN_DIR}"
+      RUNTIME_OUTPUT_DIRECTORY_RELEASE
+        "${TEST_BIN_DIR}"
+      RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO
+        "${TEST_BIN_DIR}"
+      RUNTIME_OUTPUT_DIRECTORY_MINSIZEREL
+        "${TEST_BIN_DIR}"
   )
 endforeach()

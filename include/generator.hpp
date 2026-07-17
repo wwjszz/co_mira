@@ -1,6 +1,8 @@
 #ifndef CO_MIRA_GENERATOR_HPP
 #define CO_MIRA_GENERATOR_HPP
 
+#include "co_mira.hpp"
+
 #include <cassert>
 #include <concepts>
 #include <coroutine>
@@ -225,8 +227,12 @@ public:
       : coro_{std::exchange(other.coro_, nullptr)}, begin_{std::exchange(other.begin_, false)} {}
 
   ~generator() {
-    if (auto &c = this->coro_)
+    if (auto &c = this->coro_) {
+#ifdef CO_MIRA_ENABLE_COUNTERS
+      ::mira::co::handle_counter.decrement();
+#endif
       c.destroy();
+    }
   }
 
   generator &operator=(generator &&other) noexcept {
@@ -248,6 +254,9 @@ public:
 
   struct promise_type : Erased_promise {
     generator get_return_object() noexcept {
+#ifdef CO_MIRA_ENABLE_COUNTERS
+      ::mira::co::handle_counter.increment();
+#endif
       return {std::coroutine_handle<promise_type>::from_promise(*this)};
     }
   };
