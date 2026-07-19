@@ -13,6 +13,7 @@
 #include <cerrno>
 #include <coroutine>
 #include <exception>
+#include <experimental/scope>
 #include <liburing.h>
 #include <thread>
 
@@ -21,6 +22,33 @@ namespace mira::co {
 class scheduler;
 
 namespace core {
+
+#define CO_MIRA_URING_CALL(res, uring_call, ...)                                                   \
+  do {                                                                                             \
+    res = 0;                                                                                       \
+                                                                                                   \
+    for (;;) {                                                                                     \
+      res = uring_call(__VA_ARGS__);                                                               \
+                                                                                                   \
+      if (res == -EINTR) [[unlikely]]                                                              \
+        continue;                                                                                  \
+                                                                                                   \
+      break;                                                                                       \
+    }                                                                                              \
+                                                                                                   \
+    if (res < 0) [[unlikely]]                                                                      \
+      throw_uring_error(-res, #uring_call);                                                        \
+  } while (0)
+
+#ifdef CO_MIRA_ENABLE_TESTING
+enum class scheduler_test_failure : uint8_t {
+  none,
+  init,
+  io_awaiter,
+  submit_and_wait,
+};
+#endif
+
 struct [[nodiscard]] detached_task {
   struct promise_type {
     detached_task get_return_object() {
@@ -64,7 +92,7 @@ private:
   handle_type handle_;
 };
 
-[[nodiscard]] inline detached_task run_detached(scheduler &, task<void>) noexcept;
+[[nodiscard]] inline detached_task run_detached(scheduler &, task<void>);
 
 struct scheduler_state {
   using inner_queue = fixed_queue<std::coroutine_handle<>,
@@ -75,8 +103,13 @@ struct scheduler_state {
   friend scheduler;
 
   scheduler_state() = default;
-  ~scheduler_state() {
-    if (this->initialized_) {
+  ~scheduler_state() noexcept {
+    if (in_flight_ != 0) [[unlikely]] {
+      co::log("scheduler_state in_flight_ is not zero, count: {}", in_flight_);
+      std::terminate();
+    }
+
+    if (this->initialized_) [[likely]] {
       this_thread.sche_state = nullptr;
       this_thread.sche = nullptr;
       io_uring_queue_exit(&this->ring_);
@@ -87,12 +120,11 @@ struct scheduler_state {
   void init(unsigned entries);
   [[nodiscard]] queue_size_t size() const noexcept;
   void push_handle(co_handle<> handle);
-  void co_spawn(co_handle<> handle) noexcept;
 
   [[nodiscard]] constexpr bool has_task_ready() const noexcept;
   [[nodiscard]] io_uring_sqe *get_free_sqe();
   void wait_uring();
-  [[nodiscard]] bool peek_uring() noexcept;
+  [[nodiscard]] bool peek_uring();
   void handle_cqe(io_uring_cqe *cqe);
 
   void resume_handle();
@@ -113,20 +145,30 @@ struct scheduler_state {
   scheduler_state &operator=(scheduler_state &&) = delete;
 
 private:
-  uint32_t need_to_reap_ = 0; // submit but not complete
+  uint32_t in_flight_ = 0; // submit but not complete
 
   io_uring ring_;
   inner_queue ready_queue_;
   bool initialized_ = false;
+#ifdef CO_MIRA_ENABLE_TESTING
+  scheduler_test_failure test_failure_ = scheduler_test_failure::none;
+#endif
 };
 } // namespace core
 
 class scheduler {
 public:
   scheduler() = default;
-  ~scheduler() {
+#ifdef CO_MIRA_ENABLE_TESTING
+  explicit scheduler(core::scheduler_test_failure failure) noexcept : test_failure_(failure) {}
+#endif
+  ~scheduler() noexcept {
     if (this->cur_state_ == STATE::STARTED) {
-      this->join();
+      try {
+        this->join();
+      } catch (...) {
+        log("join failed");
+      }
     } else if (this->state_.has_task_ready()) {
       this->state_.destroy_all_handle();
     }
@@ -153,23 +195,32 @@ private:
     JOINED,
   };
 
-  void init() noexcept;
+  void init();
   void run();
-  void flush_submissions() noexcept;
-  void reap_completions() noexcept;
-  void reap_completions_slow() noexcept;
-  void resume_ready_task() noexcept;
+  void flush_submissions();
+  void reap_completions();
+  void reap_completions_slow();
+  void resume_ready_task();
 
-  [[nodiscard]] core::detached_task run_detached(task<void> &&) noexcept;
+  [[nodiscard]] core::detached_task run_detached(task<void> &&);
 
   bool is_stop = false;
   STATE cur_state_ = STATE::CREATED;
   std::thread host_thread_;
   core::scheduler_state state_;
+  std::exception_ptr state_exception_;
+#ifdef CO_MIRA_ENABLE_TESTING
+  core::scheduler_test_failure test_failure_ = core::scheduler_test_failure::none;
+#endif
 };
 
 namespace core {
 inline void scheduler_state::init(unsigned entries) {
+#ifdef CO_MIRA_ENABLE_TESTING
+  if (this->test_failure_ == scheduler_test_failure::init) [[unlikely]]
+    throw_uring_error(EINVAL, "io_uring_queue_init");
+#endif
+
   int ret = io_uring_queue_init(entries, &this->ring_, 0);
   if (ret != 0) [[unlikely]]
     throw_uring_error(-ret, "io_uring_queue_init");
@@ -183,56 +234,60 @@ inline scheduler_state::queue_size_t scheduler_state::size() const noexcept {
 
 inline void scheduler_state::push_handle(co_handle<> handle) { this->ready_queue_.push(handle); }
 
-inline void scheduler_state::co_spawn(co_handle<> handle) noexcept { this->push_handle(handle); }
-
 inline constexpr bool scheduler_state::has_task_ready() const noexcept {
   return !this->ready_queue_.empty();
 }
 
 inline io_uring_sqe *scheduler_state::get_free_sqe() {
+#ifdef CO_MIRA_ENABLE_TESTING
+  if (this->test_failure_ == scheduler_test_failure::io_awaiter) [[unlikely]]
+    throw_uring_error(ENOSPC, "io_uring_get_sqe");
+#endif
+
   io_uring_sqe *sqe = io_uring_get_sqe(&this->ring_);
   if (sqe == nullptr) [[unlikely]] {
     // TODO: ensure more space when crowed
     this->ensure_sq_space(1);
     sqe = io_uring_get_sqe(&this->ring_);
-    if (sqe == nullptr) [[unlikely]]
+    if (sqe == nullptr) [[unlikely]] {
+      log("failed to acquire SQE");
       throw std::runtime_error("failed to acquire SQE");
+    }
   }
 
-  ++this->need_to_reap_;
   return sqe;
 }
 
 inline void scheduler_state::wait_uring() {
   io_uring_cqe *_;
   int res;
+  CO_MIRA_URING_CALL(res, io_uring_wait_cqe, &this->ring_, &_);
+}
+
+inline bool scheduler_state::peek_uring() {
+  io_uring_cqe *cqe = nullptr;
+  int res = 0;
 
   for (;;) {
-    res = io_uring_wait_cqe(&this->ring_, &_);
+    res = io_uring_peek_cqe(&this->ring_, &cqe);
 
     if (res == -EINTR) [[unlikely]]
       continue;
+
+    if (res == -EAGAIN)
+      return false;
 
     break;
   }
 
   if (res < 0) [[unlikely]]
-    throw_uring_error(-res, "io_uring_wait_cqe");
-}
-
-inline bool scheduler_state::peek_uring() noexcept {
-  io_uring_cqe *cqe;
-  io_uring_peek_cqe(&this->ring_, &cqe);
+    throw_uring_error(-res, "io_uring_peek_cqe");
   return cqe != nullptr;
 }
 
 inline void scheduler_state::handle_cqe(io_uring_cqe *cqe) {
-  --this->need_to_reap_;
-
   const int32_t result = cqe->res;
   user_data data(cqe->user_data);
-
-  io_uring_cqe_seen(&this->ring_, cqe);
 
   using utype = user_data::type;
   auto [info, type] = data.from_user_data();
@@ -262,29 +317,26 @@ inline void scheduler_state::resume_handle() {
 inline void scheduler_state::flush_submissions() {
   if (io_uring_sq_ready(&this->ring_)) [[likely]] {
     int res;
-
-    for (;;) {
-      res = io_uring_submit_and_wait(&this->ring_, !this->has_task_ready());
-
-      if (res == -EINTR) [[unlikely]]
-        continue;
-
-      break;
-    }
-
-    if (res < 0) [[unlikely]]
-      throw_uring_error(-res, "io_uring_submit_and_wait");
+    CO_MIRA_URING_CALL(res, io_uring_submit_and_wait, &this->ring_, !this->has_task_ready());
   }
 }
 
 inline uint32_t scheduler_state::reap_completions() {
-  io_uring_cqe *cqe;
+  io_uring_cqe *cqe = nullptr;
   unsigned head, count = 0;
+
+  auto guard = std::experimental::scope_exit([&]() noexcept {
+    if (count != 0) [[likely]] {
+      io_uring_cq_advance(&this->ring_, count);
+      in_flight_ -= count;
+    }
+  });
+
   io_uring_for_each_cqe(&this->ring_, head, cqe) {
     ++count;
     handle_cqe(cqe);
-  };
-  // TODO: use advance
+  }
+
   return count;
 }
 
@@ -294,23 +346,22 @@ inline unsigned scheduler_state::submit_ready_count() noexcept {
 
 inline void scheduler_state::ensure_sq_space(unsigned required) {
   unsigned sq_entries_ = this->ring_.sq.ring_entries;
-  if (sq_entries_ < required) [[unlikely]]
+  if (sq_entries_ < required) [[unlikely]] {
+    log("required {} SQ entries exceeds capacity {}", required, sq_entries_);
     throw std::length_error("required sq entries exceeds SQ capacity");
+  }
 
-  while (io_uring_sq_space_left(&this->ring_) < required) {
-    int res = 0;
+  // TODO: more space optimization
+  while (io_uring_sq_space_left(&this->ring_) < required) [[likely]] {
+    const unsigned space_before = io_uring_sq_space_left(&this->ring_);
+    int res;
+    CO_MIRA_URING_CALL(res, io_uring_submit, &this->ring_);
 
-    for (;;) {
-      res = io_uring_submit(&this->ring_);
-
-      if (res == -EINTR) [[unlikely]]
-        continue;
-
-      break;
+    const unsigned space_after = io_uring_sq_space_left(&this->ring_);
+    if (res == 0 && space_after <= space_before) [[unlikely]] {
+      log("io_uring_submit made no SQ progress: required {}, available {}", required, space_after);
+      throw std::runtime_error("io_uring_submit returned 0 without freeing SQ space");
     }
-
-    if (res < 0) [[unlikely]]
-      throw_uring_error(-res, "io_uring_submit");
   }
 }
 
@@ -327,7 +378,7 @@ inline void scheduler_state::destroy_all_handle() noexcept {
   }
 }
 
-inline detached_task run_detached(scheduler &sche, task<void> item) noexcept {
+inline detached_task run_detached(scheduler &sche, task<void> item) {
   try {
     co_await item;
   } catch (...) {
@@ -341,13 +392,17 @@ inline detached_task run_detached(scheduler &sche, task<void> item) noexcept {
 
 } // namespace core
 
-inline void scheduler::init() noexcept {
+inline void scheduler::init() {
   core::this_thread.sche = this;
+#ifdef CO_MIRA_ENABLE_TESTING
+  this->state_.test_failure_ = this->test_failure_;
+#endif
   this->state_.init(tuning::default_io_uring_entries);
 }
 
 inline void scheduler::start() {
   if (this->cur_state_ != STATE::CREATED && this->cur_state_ != STATE::SPAWNED) {
+    log("invalid scheduler state for start");
     throw std::logic_error("invalid scheduler state for start");
   }
 
@@ -355,11 +410,16 @@ inline void scheduler::start() {
     this->cur_state_ = STATE::STARTED;
     try {
       host_thread_ = std::thread([this]() {
-        this->init();
-        this->run();
+        try {
+          this->init();
+          this->run();
+        } catch (...) {
+          state_exception_ = std::current_exception();
+        }
       });
     } catch (...) {
       this->cur_state_ = STATE::SPAWNED;
+      log("failed to start scheduler worker thread");
       throw;
     }
   } else {
@@ -368,12 +428,19 @@ inline void scheduler::start() {
 }
 
 inline void scheduler::join() {
-  if (this->cur_state_ != STATE::STARTED) {
+  if (this->cur_state_ != STATE::STARTED) [[unlikely]] {
+    log("invalid scheduler state for join");
     throw std::logic_error("invalid scheduler state for join");
   }
-  if (host_thread_.joinable())
-    host_thread_.join();
+
+  if (auto &ht = this->host_thread_; ht.joinable()) [[likely]]
+    ht.join();
   this->cur_state_ = STATE::JOINED;
+
+  if (auto &se = this->state_exception_; se) [[unlikely]] {
+    log("rethrowing scheduler worker exception from join");
+    std::rethrow_exception(se);
+  }
 }
 
 inline void scheduler::run() {
@@ -389,15 +456,22 @@ inline void scheduler::co_spawn(task<void> &&item) {
   if (this->cur_state_ == STATE::CREATED || this->cur_state_ == STATE::SPAWNED) {
     this->cur_state_ = STATE::SPAWNED;
   } else if (this->cur_state_ != STATE::STARTED || core::this_thread.sche != this) {
+    log("invalid scheduler state for co_spawn");
     throw std::logic_error("invalid scheduler state for co_spawn");
   }
   auto dt = this->run_detached(std::move(item));
   this->state_.push_handle(dt.release());
 }
 
-inline void scheduler::flush_submissions() noexcept { this->state_.flush_submissions(); }
+inline void scheduler::flush_submissions() {
+#ifdef CO_MIRA_ENABLE_TESTING
+  if (this->test_failure_ == core::scheduler_test_failure::submit_and_wait) [[unlikely]]
+    throw_uring_error(EIO, "io_uring_submit_and_wait");
+#endif
+  this->state_.flush_submissions();
+}
 
-inline void scheduler::reap_completions() noexcept {
+inline void scheduler::reap_completions() {
 
   uint32_t handle_num = this->state_.peek_uring() ? this->state_.reap_completions() : 0;
 
@@ -414,9 +488,9 @@ inline void scheduler::reap_completions() noexcept {
   this->reap_completions_slow();
 }
 
-inline void scheduler::reap_completions_slow() noexcept {
+inline void scheduler::reap_completions_slow() {
 
-  if (!this->state_.peek_uring() && this->state_.need_to_reap_) {
+  if (!this->state_.peek_uring() && this->state_.in_flight_) {
     this->state_.wait_uring();
   }
 
@@ -428,7 +502,7 @@ inline void scheduler::reap_completions_slow() noexcept {
   }
 }
 
-inline void scheduler::resume_ready_task() noexcept {
+inline void scheduler::resume_ready_task() {
   auto num = this->state_.size();
   for (; num > 0; --num) {
     this->state_.resume_handle();
@@ -436,16 +510,11 @@ inline void scheduler::resume_ready_task() noexcept {
 }
 
 inline void scheduler::report_exception(std::exception_ptr except) noexcept {
-  try {
-    std::rethrow_exception(except);
-  } catch (const std::exception &error) {
-    // log(error.what());
-  } catch (...) {
-    // log("unknown detached task exception");
-  }
+  if (!this->state_exception_)
+    this->state_exception_ = std::move(except);
 }
 
-inline core::detached_task scheduler::run_detached(task<void> &&item) noexcept {
+inline core::detached_task scheduler::run_detached(task<void> &&item) {
   return core::run_detached(*this, std::move(item));
 }
 

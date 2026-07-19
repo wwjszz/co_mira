@@ -65,6 +65,7 @@ template <typename T> struct [[nodiscard]] task_promise : task_promise_base {
     }
 
     if (auto eptr = std::get_if<exception_index>(&self.result_)) [[unlikely]] {
+      log("task<T> rethrowing stored exception");
       std::rethrow_exception(*eptr);
     }
 
@@ -86,6 +87,7 @@ template <> struct [[nodiscard]] task_promise<void> : task_promise_base {
   void return_void() const {}
   void result() const {
     if (auto &e = this->except_) {
+      log("task<void> rethrowing stored exception");
       std::rethrow_exception(e);
     }
   }
@@ -104,6 +106,7 @@ template <typename T> struct [[nodiscard]] task_promise<T &> : task_promise_base
 
   [[nodiscard]] T &result() const {
     if (auto eptr = std::get_if<exception_index>(&this->result_)) [[unlikely]] {
+      log("task<T&> rethrowing stored exception");
       std::rethrow_exception(*eptr);
     }
     return *std::get<pointer_index>(this->result_);

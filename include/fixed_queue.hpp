@@ -1,5 +1,7 @@
 #ifndef CO_MIRA_FIXED_QUEUE_HPP
 #define CO_MIRA_FIXED_QUEUE_HPP
+#include "log.hpp"
+
 #include <array>
 #include <bit>
 #include <cassert>
@@ -44,13 +46,17 @@ template <typename T, std::unsigned_integral Cap_Type, Cap_Type Cap> struct fixe
   }
 
   template <typename Value> constexpr void push(Value &&val) {
-    if (!this->try_push(std::forward<Value>(val))) [[unlikely]]
+    if (!this->try_push(std::forward<Value>(val))) [[unlikely]] {
+      co::log("fixed_queue is full");
       throw std::length_error("fixed_queue is full");
+    }
   }
 
   [[nodiscard]] constexpr T pop() {
-    if (this->empty()) [[unlikely]]
+    if (this->empty()) [[unlikely]] {
+      co::log("fixed_queue is empty");
       throw std::out_of_range("fixed_queue is empty");
+    }
     return this->array_[this->advance_head()];
   }
 

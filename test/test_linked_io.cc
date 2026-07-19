@@ -32,8 +32,10 @@ public:
 
 #define CHECK(expression)                                                                          \
   do {                                                                                             \
-    if (!(expression))                                                                             \
+    if (!(expression)) {                                                                           \
+      mira::co::log("check failed: {}", #expression);                                               \
       throw test_failure(#expression, __FILE__, __LINE__);                                         \
+    }                                                                                              \
   } while (false)
 
 int failed_tests = 0;
@@ -60,6 +62,8 @@ using two_nop_chain = decltype(test_nop{} && test_nop{});
 static_assert(!std::is_reference_v<two_nop_chain>,
               "operator&& must return an owning linked awaiter by value");
 static_assert(std::destructible<two_nop_chain>, "a linked awaiter must be destructible");
+static_assert(!noexcept(std::declval<two_nop_chain &>().await_suspend(
+    std::declval<mira::co::co_handle<>>())));
 
 void run_scheduler(task<void> item) {
   scheduler sche;

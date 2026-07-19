@@ -28,13 +28,13 @@ struct count_helper {
 
     try {
       if (value == 0) {
-        log("name <{}> status>"
+        log("name `{}` status<:"
             "\x1b[32m[SUCCESS]\x1b[0m",
             name);
       } else {
-        log("name <{}> status>"
+        log("name `{}` status<:"
             "\x1b[31m[FAILED]\x1b[0m "
-            "counter>{}",
+            "counter: {}",
             name, value);
       }
     } catch (...) {
@@ -56,7 +56,8 @@ inline count_helper handle_counter{"coroutine_handle"};
 
 [[noreturn]]
 inline void throw_uring_error(int result, std::string_view operation) {
-  throw std::system_error(-result, std::generic_category(), std::string(operation));
+  log("{} failed with errno {}", operation, result);
+  throw std::system_error(result, std::generic_category(), std::string(operation));
 }
 
 } // namespace mira::co

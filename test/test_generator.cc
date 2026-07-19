@@ -32,8 +32,10 @@ private:
 
 #define CHECK(expression)                                                                          \
   do {                                                                                             \
-    if (!(expression))                                                                             \
+    if (!(expression)) {                                                                           \
+      mira::co::log("check failed: {}", #expression);                                               \
       throw test_failure(#expression, __FILE__, __LINE__);                                         \
+    }                                                                                              \
   } while (false)
 
 int failed_tests = 0;
@@ -177,17 +179,20 @@ public:
 };
 
 generator<int> throw_before_first_yield() {
+  mira::co::log("throwing before first generator yield");
   throw generator_error("before first yield");
   co_return;
 }
 
 generator<int> throw_after_first_yield() {
   co_yield 1;
+  mira::co::log("throwing after first generator yield");
   throw generator_error("after first yield");
 }
 
 generator<int> failing_child() {
   co_yield 7;
+  mira::co::log("throwing from nested generator");
   throw generator_error("nested child");
 }
 
@@ -215,8 +220,10 @@ struct throwing_range {
     int &operator*() const noexcept { return owner->values[index]; }
 
     iterator &operator++() {
-      if (owner->throw_on_increment)
+      if (owner->throw_on_increment) {
+        mira::co::log("throwing from range increment");
         throw range_error("range increment");
+      }
       ++index;
       return *this;
     }
@@ -229,8 +236,10 @@ struct throwing_range {
   };
 
   iterator begin() {
-    if (throw_on_begin)
+    if (throw_on_begin) {
+      mira::co::log("throwing from range begin");
       throw range_error("range begin");
+    }
     return {this, 0};
   }
 
@@ -479,6 +488,13 @@ void test_generator_move_operations() {
   CHECK(old_frame_alive == 0);
 }
 
+void test_repeated_begin_throws() {
+  auto values = singleton(42);
+  auto it = values.begin();
+  CHECK(*it == 42);
+  check_throws<std::logic_error>([&] { (void)values.begin(); });
+}
+
 } // namespace
 
 int main() {
@@ -497,6 +513,7 @@ int main() {
   run_test("early generator destruction", test_early_generator_destruction);
   run_test("nested generator destruction", test_nested_generator_destruction);
   run_test("generator move operations", test_generator_move_operations);
+  run_test("repeated begin", test_repeated_begin_throws);
 
   if (failed_tests != 0) {
     std::cerr << failed_tests << " test(s) failed\n";

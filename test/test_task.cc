@@ -36,8 +36,10 @@ private:
 
 #define CHECK(expression)                                                                          \
   do {                                                                                             \
-    if (!(expression))                                                                             \
+    if (!(expression)) {                                                                           \
+      mira::co::log("check failed: {}", #expression);                                               \
       throw test_failure(#expression, __FILE__, __LINE__);                                         \
+    }                                                                                              \
   } while (false)
 
 int failed_tests = 0;
@@ -152,7 +154,10 @@ struct throws_when_moved {
   throws_when_moved() = default;
   throws_when_moved(const throws_when_moved &) = delete;
   throws_when_moved &operator=(const throws_when_moved &) = delete;
-  throws_when_moved(throws_when_moved &&) { throw construction_error{}; }
+  throws_when_moved(throws_when_moved &&) {
+    mira::co::log("throwing from throws_when_moved move constructor");
+    throw construction_error{};
+  }
 };
 
 task<int> lazy_integer(bool &entered, int value) {
@@ -190,9 +195,6 @@ task<void> await_void_and_reference_children(bool &void_completed, int &value,
                                              int *&reference_address) {
   co_await void_value(void_completed);
   int &reference = co_await mutable_reference(value);
-  if (std::same_as<int &, decltype(reference)>) {
-    std::println(std::cout, "reference is int&!!!");
-  }
   reference_address = std::addressof(reference);
   reference = 29;
   // auto &&reference = co_await mutable_reference(value);
@@ -229,9 +231,6 @@ task<void> consume_move_only_value(int &result) {
 task<void> observe_lvalue_and_const_results(int &observed) {
   auto child = integer_value(5);
   int &mutable_result = co_await child;
-  if (std::same_as<int &, decltype(mutable_result)>) {
-    std::println(std::cout, "mutable_result is int&!!!");
-  }
   mutable_result = 8;
 
   const auto &const_child = child;
@@ -240,21 +239,25 @@ task<void> observe_lvalue_and_const_results(int &observed) {
 }
 
 task<int> fail_with_value_exception() {
+  mira::co::log("throwing task<int> failure");
   throw task_error("task<int> failed");
   co_return 0;
 }
 
 task<void> fail_with_void_exception() {
+  mira::co::log("throwing task<void> failure");
   throw task_error("task<void> failed");
   co_return;
 }
 
 task<int &> fail_with_reference_exception(int &value) {
+  mira::co::log("throwing task<int&> failure");
   throw task_error("task<int&> failed");
   co_return value;
 }
 
 task<int> fail_with_non_std_exception() {
+  mira::co::log("throwing non-standard task failure");
   throw 73;
   co_return 0;
 }
@@ -262,6 +265,7 @@ task<int> fail_with_non_std_exception() {
 task<int> fail_after_reschedule(manual_loop &loop, bool &reached_suspend) {
   reached_suspend = true;
   co_await loop.reschedule();
+  mira::co::log("throwing task failure after suspension");
   throw task_error("failed after suspension");
   co_return 0;
 }
@@ -296,8 +300,10 @@ task<int> recursive_sum(int depth) {
 }
 
 task<int> recursive_failure(int depth) {
-  if (depth == 0)
+  if (depth == 0) {
+    mira::co::log("throwing deep task failure");
     throw task_error("deep failure");
+  }
   co_return co_await recursive_failure(depth - 1);
 }
 

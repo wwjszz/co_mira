@@ -84,9 +84,10 @@ public:
   }
 
   void unhandled_exception() {
-    if (this->state_.is_bottom())
+    if (this->state_.is_bottom()) {
+      log("generator root coroutine rethrowing exception");
       throw;
-    else
+    } else
       this->except_ = std::current_exception();
   }
 
@@ -192,6 +193,7 @@ struct promise_erased<Yielded>::recursive_awatier {
   }
   void await_resume() {
     if (auto e = this->gen_.coro_.promise().except_) {
+      log("recursive generator rethrowing nested exception");
       std::rethrow_exception(e);
     }
   }
@@ -265,9 +267,11 @@ public:
   static_assert(std::is_pointer_interconvertible_base_of_v<Erased_promise, promise_type>);
 
 private:
-  void mark_as_started() noexcept {
-    if (this->begin_) [[unlikely]]
-      std::logic_error("generator::begin called more than once");
+  void mark_as_started() {
+    if (this->begin_) [[unlikely]] {
+      log("generator::begin called more than once");
+      throw std::logic_error("generator::begin called more than once");
+    }
     this->begin_ = true;
   }
 

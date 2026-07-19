@@ -37,8 +37,10 @@ public:
 
 #define CHECK(expression)                                                                          \
   do {                                                                                             \
-    if (!(expression))                                                                             \
+    if (!(expression)) {                                                                           \
+      mira::co::log("check failed: {}", #expression);                                               \
       throw test_failure(#expression, __FILE__, __LINE__);                                         \
+    }                                                                                              \
   } while (false)
 
 int failed_tests = 0;
@@ -63,6 +65,9 @@ struct test_nop : mira::co::core::io_awaiter {
 
 static_assert(mira::co::core::awaiter_action<test_nop>);
 static_assert(std::movable<test_nop>);
+static_assert(
+    !noexcept(std::declval<test_nop &>().await_suspend(std::declval<mira::co::co_handle<>>())));
+static_assert(!noexcept(std::declval<scheduler &>().co_spawn(std::declval<task<void> &&>())));
 
 void run_scheduler(task<void> item) {
   scheduler sche;
@@ -96,6 +101,7 @@ task<void> yielding_task(std::vector<int> &trace, int id) {
 }
 
 task<void> throw_from_detached_task() {
+  mira::co::log("throwing detached task failure");
   throw std::runtime_error("detached failure");
   co_return;
 }
@@ -273,7 +279,13 @@ void test_detached_exception_does_not_stop_other_tasks() {
   sche.co_spawn(throw_from_detached_task());
   sche.co_spawn(mark_entered(completed));
   sche.start();
-  sche.join();
+  bool caught = false;
+  try {
+    sche.join();
+  } catch (const std::runtime_error &error) {
+    caught = std::string_view(error.what()) == "detached failure";
+  }
+  CHECK(caught);
   CHECK(completed);
 }
 

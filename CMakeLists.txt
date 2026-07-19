@@ -57,17 +57,23 @@ foreach(TEST_SOURCE IN LISTS TEST_SOURCES)
   )
 
   if(BUILD_TESTING AND TEST_NAME MATCHES "^test_")
-  add_test(
-    NAME "${TEST_NAME}"
-    COMMAND "$<TARGET_FILE:${TEST_NAME}>"
-  )
+    target_compile_definitions(
+      "${TEST_NAME}"
+      PRIVATE
+        CO_MIRA_ENABLE_TESTING
+    )
 
-  set_tests_properties(
-    "${TEST_NAME}"
-    PROPERTIES
-      WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}"
-  )
-endif()
+    add_test(
+      NAME "${TEST_NAME}"
+      COMMAND "$<TARGET_FILE:${TEST_NAME}>"
+    )
+
+    set_tests_properties(
+      "${TEST_NAME}"
+      PROPERTIES
+        WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}"
+    )
+  endif()
 
   target_link_libraries(
     "${TEST_NAME}"

@@ -23,10 +23,9 @@ concept awaiter_action = std::derived_from<std::remove_cvref_t<Action>, io_await
                            { action.prepare(sqe) } noexcept -> std::same_as<void>;
                          };
 
-// TODO: get_free_sqe when await_suspend
 struct io_awaiter {
   static constexpr bool await_ready() noexcept { return false; }
-  void await_suspend(this awaiter_action auto &self, co_handle<> handle) noexcept {
+  void await_suspend(this awaiter_action auto &self, co_handle<> handle) {
     auto sqe = this_thread.sche_state->get_free_sqe();
     self.prepare(sqe);
     self.init_sqe(sqe);
@@ -58,13 +57,12 @@ protected:
   ~io_awaiter() = default;
 };
 
-// TODO: submit once for all
 template <typename... Awaiters>
   requires((std::is_base_of_v<io_awaiter, Awaiters> && awaiter_action<Awaiters>) && ...)
 struct [[nodiscard]] linked_io_awaiter {
   static_assert(sizeof...(Awaiters) >= 2, "");
   static constexpr bool await_ready() noexcept { return false; }
-  void await_suspend(co_handle<> handle) noexcept {
+  void await_suspend(co_handle<> handle) {
     constexpr std::size_t sz = sizeof...(Awaiters);
 
     auto sche_state = this_thread.sche_state;
@@ -96,8 +94,7 @@ struct [[nodiscard]] linked_io_awaiter {
   linked_io_awaiter &operator=(linked_io_awaiter &&) = delete;
 
 private:
-  template <std::size_t Index>
-  void prepare_one(scheduler_state *sche_state, co_handle<> handle) noexcept {
+  template <std::size_t Index> void prepare_one(scheduler_state *sche_state, co_handle<> handle) {
     constexpr bool is_final = Index + 1 == sizeof...(Awaiters);
 
     auto &awaiter = std::get<Index>(awaiters);
