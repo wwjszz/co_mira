@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <exception>
 #include <iostream>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -15,9 +16,9 @@
 
 namespace {
 
-using mira::co::core::scheduler_test_failure;
 using mira::co::scheduler;
 using mira::co::task;
+using mira::co::core::scheduler_test_failure;
 
 class test_failure : public std::runtime_error {
 public:
@@ -29,7 +30,7 @@ public:
 #define CHECK(expression)                                                                          \
   do {                                                                                             \
     if (!(expression)) {                                                                           \
-      mira::co::log("check failed: {}", #expression);                                               \
+      mira::co::log("check failed: {}", #expression);                                              \
       throw test_failure(#expression, __FILE__, __LINE__);                                         \
     }                                                                                              \
   } while (false)
@@ -73,6 +74,29 @@ task<void> complete_normally(bool &completed) {
 
 task<void> no_op() { co_return; }
 
+struct throwing_assignment {
+  int value = 0;
+  bool fail = false;
+
+  throwing_assignment() = default;
+  explicit throwing_assignment(int value_, bool fail_ = false) noexcept
+      : value(value_), fail(fail_) {}
+
+  throwing_assignment(const throwing_assignment &) = default;
+  throwing_assignment(throwing_assignment &&) noexcept = default;
+  throwing_assignment &operator=(throwing_assignment &&) noexcept = default;
+
+  throwing_assignment &operator=(const throwing_assignment &other) {
+    if (other.fail) {
+      mira::co::log("throwing from fixed_queue test assignment");
+      throw std::runtime_error("assignment failed");
+    }
+    this->value = other.value;
+    this->fail = other.fail;
+    return *this;
+  }
+};
+
 void test_throw_uring_error_uses_positive_errno() {
   auto error = check_throws<std::system_error>(
       [] { mira::co::throw_uring_error(EACCES, "p0_test_operation"); });
@@ -94,6 +118,38 @@ void test_fixed_queue_full_and_empty() {
   CHECK(queue.pop() == 1);
   CHECK(queue.pop() == 2);
   CHECK(queue.pop() == 3);
+}
+
+void test_fixed_queue_move_only_values() {
+  mira::fixed_queue<std::unique_ptr<int>, uint8_t, 4> queue;
+  auto first = std::make_unique<int>(11);
+  auto first_address = first.get();
+
+  queue.push(std::move(first));
+  queue.push(std::make_unique<int>(22));
+
+  CHECK(first == nullptr);
+  auto popped_first = queue.pop();
+  auto popped_second = queue.pop();
+  CHECK(popped_first.get() == first_address);
+  CHECK(*popped_first == 11);
+  CHECK(*popped_second == 22);
+  CHECK(queue.empty());
+}
+
+void test_fixed_queue_push_rolls_back_on_assignment_failure() {
+  mira::fixed_queue<throwing_assignment, uint8_t, 4> queue;
+  throwing_assignment failing_value{7, true};
+
+  auto error = check_throws<std::runtime_error>([&] { queue.push(failing_value); });
+  CHECK(std::string_view(error.what()) == "assignment failed");
+  CHECK(queue.empty());
+  CHECK(queue.size() == 0);
+
+  queue.push(throwing_assignment{9});
+  CHECK(queue.size() == 1);
+  CHECK(queue.pop().value == 9);
+  CHECK(queue.empty());
 }
 
 void test_invalid_scheduler_states() {
@@ -127,8 +183,7 @@ void test_worker_submit_failure_reaches_join() {
   auto error = check_throws<std::system_error>([&] { sche.join(); });
   CHECK(completed);
   CHECK(error.code().value() == EIO);
-  CHECK(std::string_view(error.what()).find("io_uring_submit_and_wait") !=
-        std::string_view::npos);
+  CHECK(std::string_view(error.what()).find("io_uring_submit_and_wait") != std::string_view::npos);
 }
 
 void test_io_awaiter_failure_reaches_join() {
@@ -145,6 +200,8 @@ void test_io_awaiter_failure_reaches_join() {
 int main() {
   run_test("positive errno system_error", test_throw_uring_error_uses_positive_errno);
   run_test("fixed queue full and empty", test_fixed_queue_full_and_empty);
+  run_test("fixed queue move-only values", test_fixed_queue_move_only_values);
+  run_test("fixed queue push rollback", test_fixed_queue_push_rolls_back_on_assignment_failure);
   run_test("invalid scheduler states", test_invalid_scheduler_states);
   run_test("worker init failure reaches join", test_worker_init_failure_reaches_join);
   run_test("worker submit failure reaches join", test_worker_submit_failure_reaches_join);

@@ -1,6 +1,6 @@
 #ifndef CO_MIRA_TASK_HPP
 #define CO_MIRA_TASK_HPP
-#include "co_mira.hpp"
+#include "detail/core.hpp"
 
 #include <cassert>
 #include <concepts>
@@ -38,7 +38,7 @@ struct task_promise_base {
     assert(!this->has_parent());
     this->parent_coro_ = cont;
   }
-  bool has_parent() noexcept { return static_cast<bool>(this->parent_coro_); }
+  bool has_parent() const noexcept { return static_cast<bool>(this->parent_coro_); }
 
   task_promise_base(const task_promise_base &) noexcept = delete;
   task_promise_base &operator=(const task_promise_base &) noexcept = delete;
@@ -119,22 +119,18 @@ private:
   std::variant<T *, std::exception_ptr> result_;
 };
 
+// A lazy, move-only, single-consumer coroutine result.
+//
+// At most one coroutine may be suspended waiting for a task at a time. Concurrent
+// or otherwise overlapping co_await operations on the same task are unsupported;
+// use a future shared_task for multi-consumer fan-out. The task object owns its
+// coroutine frame, moving transfers that ownership, and destroying a non-empty
+// task destroys the frame.
 template <typename T = void> struct [[nodiscard]] task {
   using promise_type = task_promise<T>;
   using handle_type = co_handle<promise_type>;
 
   friend promise_type;
-
-  struct task_awaiter_base {
-    bool await_ready() noexcept { return !this->handle_ || this->handle_.done(); }
-    co_handle<> await_suspend(co_handle<> cont) {
-      this->handle_.promise().set_parent(cont);
-      return this->handle_;
-    }
-    static constexpr void await_resume() noexcept {}
-
-    co_handle<promise_type> handle_;
-  };
 
   ~task() {
     if (auto &h = this->handle_) {
@@ -148,7 +144,14 @@ template <typename T = void> struct [[nodiscard]] task {
   task(task &&other) noexcept : handle_(std::exchange(other.handle_, nullptr)) {}
   task &operator=(task &&other) noexcept {
     if (this != &other) {
-      std::swap(this->handle_, other.handle_);
+      if (handle_) {
+        handle_.destroy();
+#ifdef CO_MIRA_ENABLE_COUNTERS
+        ::mira::co::handle_counter.decrement();
+#endif
+      }
+
+      handle_ = std::exchange(other.handle_, {});
     }
     return *this;
   }
@@ -156,14 +159,17 @@ template <typename T = void> struct [[nodiscard]] task {
   task(const task &) = delete;
   task &operator=(const task &) = delete;
 
-  [[nodiscard]] co_handle<promise_type> get_handle() noexcept { return this->handle_; }
+  // TODO: remove this
+  // non-owning only for test
+  [[nodiscard]] co_handle<promise_type> native_handle() const noexcept { return this->handle_; }
 
-  [[nodiscard]] bool is_ready() noexcept { return !this->handle_ || this->handle_.done(); }
+  [[nodiscard]] bool is_ready() const noexcept { return !this->handle_ || this->handle_.done(); }
   auto when_ready() { return task_awaiter_base{this->handle_}; }
 
   auto operator co_await(this auto &&self) {
     assert(self.handle_);
     struct task_awaiter : task_awaiter_base {
+      using task_awaiter_base::task_awaiter_base;
       decltype(auto) await_resume() {
         return std::forward_like<decltype(self)>(this->handle_.promise()).result();
       }
@@ -174,6 +180,19 @@ template <typename T = void> struct [[nodiscard]] task {
 private:
   explicit task(co_handle<promise_type> handle) noexcept : handle_(handle) {}
   co_handle<promise_type> handle_;
+
+  struct task_awaiter_base {
+    explicit task_awaiter_base(handle_type handle) noexcept : handle_(handle) {}
+    bool await_ready() noexcept { return !this->handle_ || this->handle_.done(); }
+    co_handle<> await_suspend(co_handle<> cont) {
+      this->handle_.promise().set_parent(cont);
+      return this->handle_;
+    }
+    static constexpr void await_resume() noexcept {}
+
+  protected:
+    co_handle<promise_type> handle_;
+  };
 };
 
 template <typename T> task<T> inline task_promise<T>::get_return_object() {

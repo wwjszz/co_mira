@@ -3,7 +3,7 @@ Language: Cpp
 BasedOnStyle: LLVM
 
 Standard: Latest
-ColumnLimit: 100
+ColumnLimit: 150
 IndentWidth: 2
 ContinuationIndentWidth: 4
 TabWidth: 2

@@ -1,7 +1,7 @@
 #ifndef CO_MIRA_GENERATOR_HPP
 #define CO_MIRA_GENERATOR_HPP
 
-#include "co_mira.hpp"
+#include "detail/core.hpp"
 
 #include <cassert>
 #include <concepts>
@@ -225,9 +225,7 @@ class [[nodiscard]] generator : public std::ranges::view_interface<generator<Ref
 
 public:
   generator(const generator &) = delete;
-
-  generator(generator &&other) noexcept
-      : coro_{std::exchange(other.coro_, nullptr)}, begin_{std::exchange(other.begin_, false)} {}
+  generator &operator=(const generator &) = delete;
 
   ~generator() {
     if (auto &c = this->coro_) {
@@ -237,6 +235,9 @@ public:
       c.destroy();
     }
   }
+
+  generator(generator &&other) noexcept
+      : coro_{std::exchange(other.coro_, nullptr)}, begin_{std::exchange(other.begin_, false)} {}
 
   generator &operator=(generator &&other) noexcept {
     if (&other != this) {

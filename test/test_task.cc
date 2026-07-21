@@ -37,7 +37,7 @@ private:
 #define CHECK(expression)                                                                          \
   do {                                                                                             \
     if (!(expression)) {                                                                           \
-      mira::co::log("check failed: {}", #expression);                                               \
+      mira::co::log("check failed: {}", #expression);                                              \
       throw test_failure(#expression, __FILE__, __LINE__);                                         \
     }                                                                                              \
   } while (false)
@@ -111,17 +111,17 @@ private:
 };
 
 template <typename T> void complete(manual_loop &loop, task<T> &item) {
-  CHECK(item.get_handle());
+  CHECK(item.native_handle());
   CHECK(!item.is_ready());
-  loop.schedule(item.get_handle());
+  loop.schedule(item.native_handle());
   loop.run();
   CHECK(item.is_ready());
 }
 
 template <typename T> decltype(auto) result_of(task<T> &item) {
-  CHECK(item.get_handle());
+  CHECK(item.native_handle());
   CHECK(item.is_ready());
-  return item.get_handle().promise().result();
+  return item.native_handle().promise().result();
 }
 
 struct task_error : std::runtime_error {
@@ -404,7 +404,7 @@ void test_direct_suspension_and_resumption() {
   int stage = 0;
   auto item = suspended_value(loop, stage);
 
-  loop.schedule(item.get_handle());
+  loop.schedule(item.native_handle());
   CHECK(loop.run_one());
   CHECK(stage == 1);
   CHECK(!item.is_ready());
@@ -423,7 +423,7 @@ void test_suspended_child_resumes_parent() {
   int result = 0;
   auto parent = parent_of_suspended_child(loop, trace, result);
 
-  loop.schedule(parent.get_handle());
+  loop.schedule(parent.native_handle());
   CHECK(loop.run_one());
   CHECK(trace == std::vector<int>({1, 2}));
   CHECK(!parent.is_ready());
@@ -550,7 +550,7 @@ void test_move_construction_and_assignment() {
   manual_loop loop;
   auto source = integer_value(9);
   auto moved = std::move(source);
-  CHECK(!source.get_handle());
+  CHECK(!source.native_handle());
   CHECK(source.is_ready());
   complete(loop, moved);
   CHECK(result_of(moved) == 9);
@@ -558,15 +558,10 @@ void test_move_construction_and_assignment() {
   auto destination = integer_value(1);
   auto replacement = integer_value(2);
   destination = std::move(replacement);
+  CHECK(!replacement.native_handle());
+  CHECK(replacement.is_ready());
   complete(loop, destination);
   CHECK(result_of(destination) == 2);
-
-  // Move assignment uses swap semantics, so the moved-from object remains
-  // valid and may own the destination's previous coroutine.
-  if (replacement.get_handle()) {
-    complete(loop, replacement);
-    CHECK(result_of(replacement) == 1);
-  }
 }
 
 void test_destruction_of_unstarted_and_suspended_tasks() {
@@ -584,7 +579,7 @@ void test_destruction_of_unstarted_and_suspended_tasks() {
   manual_loop loop;
   {
     auto item = guarded_suspension(loop, suspended_alive);
-    loop.schedule(item.get_handle());
+    loop.schedule(item.native_handle());
     CHECK(loop.run_one());
     CHECK(suspended_alive == 1);
     CHECK(!item.is_ready());

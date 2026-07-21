@@ -1,9 +1,9 @@
 #ifndef CO_MIRA_YIELD_HPP
 #define CO_MIRA_YIELD_HPP
 
-#include "co_mira.hpp"
+#include "detail/core.hpp"
+#include "detail/thread_meta.hpp"
 #include "scheduler.hpp"
-#include "thread_meta.hpp"
 
 namespace mira::co {
 namespace core {

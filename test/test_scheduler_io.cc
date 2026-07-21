@@ -31,16 +31,15 @@ using mira::co::task;
 class test_failure : public std::runtime_error {
 public:
   test_failure(const char *expression, const char *file, int line)
-      : std::runtime_error(std::string(file) + ':' + std::to_string(line) +
-                           ": check failed: " + expression) {}
+      : std::runtime_error(std::string(file) + ':' + std::to_string(line) + ": check failed: " + expression) {}
 };
 
-#define CHECK(expression)                                                                          \
-  do {                                                                                             \
-    if (!(expression)) {                                                                           \
-      mira::co::log("check failed: {}", #expression);                                               \
-      throw test_failure(#expression, __FILE__, __LINE__);                                         \
-    }                                                                                              \
+#define CHECK(expression)                                                                                                                            \
+  do {                                                                                                                                               \
+    if (!(expression)) {                                                                                                                             \
+      mira::co::log("check failed: {}", #expression);                                                                                                \
+      throw test_failure(#expression, __FILE__, __LINE__);                                                                                           \
+    }                                                                                                                                                \
   } while (false)
 
 int failed_tests = 0;
@@ -63,10 +62,10 @@ struct test_nop : mira::co::core::io_awaiter {
   void prepare(io_uring_sqe *sqe) noexcept { io_uring_prep_nop(sqe); }
 };
 
-static_assert(mira::co::core::awaiter_action<test_nop>);
-static_assert(std::movable<test_nop>);
-static_assert(
-    !noexcept(std::declval<test_nop &>().await_suspend(std::declval<mira::co::co_handle<>>())));
+static_assert(mira::co::core::linkable_action<test_nop>);
+static_assert(std::move_constructible<test_nop>);
+static_assert(!std::is_move_assignable_v<test_nop>);
+static_assert(!noexcept(std::declval<test_nop &>().await_suspend(std::declval<mira::co::co_handle<>>())));
 static_assert(!noexcept(std::declval<scheduler &>().co_spawn(std::declval<task<void> &&>())));
 
 void run_scheduler(task<void> item) {
@@ -116,9 +115,7 @@ task<void> await_stored_nop(test_nop operation, int32_t &result, bool &resumed) 
   resumed = true;
 }
 
-task<void> await_stored_recv(mira::co::core::io_recv operation, int32_t &result) {
-  result = co_await operation;
-}
+task<void> await_stored_recv(mira::co::core::io_recv operation, int32_t &result) { result = co_await operation; }
 
 task<void> nop_once(int &completed, int &bad_results) {
   int32_t result = co_await test_nop{};
@@ -188,8 +185,7 @@ task<void> accept_one(int listener, accept_results &results) {
   sockaddr_storage peer{};
   socklen_t peer_length = sizeof(peer);
 
-  results.accepted_fd =
-      co_await mira::co::io::accept(listener, reinterpret_cast<sockaddr *>(&peer), &peer_length);
+  results.accepted_fd = co_await mira::co::io::accept(listener, reinterpret_cast<sockaddr *>(&peer), &peer_length);
   if (results.accepted_fd >= 0) {
     results.peer_family = peer.ss_family;
     results.close_accepted = co_await mira::co::io::close(results.accepted_fd);
@@ -218,8 +214,7 @@ listener_pair make_connected_listener() {
   CHECK(::listen(result.listener, 8) == 0);
 
   socklen_t address_length = sizeof(address);
-  CHECK(::getsockname(result.listener, reinterpret_cast<sockaddr *>(&address), &address_length) ==
-        0);
+  CHECK(::getsockname(result.listener, reinterpret_cast<sockaddr *>(&address), &address_length) == 0);
 
   result.client = ::socket(AF_INET, SOCK_STREAM, 0);
   CHECK(result.client >= 0);
@@ -253,6 +248,11 @@ void test_user_data_round_trip() {
     auto [decoded_info, decoded_type] = mira::co::core::user_data(encoded).from_user_data();
     CHECK(decoded_info == std::addressof(info));
     CHECK(decoded_type == expected);
+  }
+
+  for (uint64_t invalid_tag = 2; invalid_tag < 8; ++invalid_tag) {
+    uint64_t encoded = info.as_user_data() | invalid_tag;
+    CHECK(mira::co::core::user_data(encoded).type_from_user_data() == type::unknown);
   }
 }
 
@@ -400,8 +400,7 @@ int main() {
   run_test("user data round trip", test_user_data_round_trip);
   run_test("host spawn and yield order", test_host_spawn_and_yield_order);
   run_test("detached exception isolation", test_detached_exception_does_not_stop_other_tasks);
-  run_test("unstarted scheduler destruction",
-           test_unstarted_scheduler_does_not_execute_tasks_in_destructor);
+  run_test("unstarted scheduler destruction", test_unstarted_scheduler_does_not_execute_tasks_in_destructor);
   run_test("temporary and preconstructed awaiters", test_temporary_and_preconstructed_awaiters);
   run_test("many nop completions", test_many_nop_completions);
   run_test("negative io results", test_negative_io_results);
