@@ -3,6 +3,17 @@ cmake_minimum_required(VERSION 3.20)
 project(co_mira LANGUAGES CXX)
 include(CTest)
 
+# Cross-scheduler wakeup and submission are MSG_RING-only. There is no eventfd
+# fallback, so reject unsupported target kernels during configuration.
+set(CO_MIRA_MINIMUM_KERNEL_VERSION "5.19")
+if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux" OR
+   CMAKE_SYSTEM_VERSION VERSION_LESS "${CO_MIRA_MINIMUM_KERNEL_VERSION}")
+  message(
+    FATAL_ERROR
+      "co_mira requires Linux ${CO_MIRA_MINIMUM_KERNEL_VERSION}+ with IORING_OP_MSG_RING and async-cancel ANY|ALL support; target system is ${CMAKE_SYSTEM_NAME} ${CMAKE_SYSTEM_VERSION}"
+  )
+endif()
+
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)

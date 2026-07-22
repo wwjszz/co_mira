@@ -250,10 +250,21 @@ void test_user_data_round_trip() {
     CHECK(decoded_type == expected);
   }
 
-  for (uint64_t invalid_tag = 2; invalid_tag < 8; ++invalid_tag) {
-    uint64_t encoded = info.as_user_data() | invalid_tag;
-    CHECK(mira::co::core::user_data(encoded).type_from_user_data() == type::unknown);
+  for (type expected : {type::msg_ring, type::msg_ring_ack, type::resume_on}) {
+    uint64_t encoded = info.as_user_data() | static_cast<uint64_t>(expected);
+    mira::co::core::user_data decoded(encoded);
+    CHECK(decoded.address_from_user_data() == std::addressof(info));
+    CHECK(decoded.type_from_user_data() == expected);
   }
+
+  for (type expected : {type::msg_ring_stop, type::msg_ring_stop_ack}) {
+    uint64_t encoded = static_cast<uint64_t>(expected);
+    CHECK(mira::co::core::user_data(encoded).type_from_user_data() == expected);
+  }
+
+  uint64_t encoded = info.as_user_data() | 7;
+  CHECK(mira::co::core::user_data(encoded).type_from_user_data() == type::unknown);
+  CHECK(mira::co::core::user_data(mira::co::core::user_data::shutdown_cancel).type_from_user_data() == type::unknown);
 }
 
 void test_host_spawn_and_yield_order() {

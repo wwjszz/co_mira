@@ -4,10 +4,11 @@
 
 namespace mira::co::tuning {
 
-// TODO: let user define
-// inline constexpr uint32_t ready_queue_capacity_ = 16384;
 inline constexpr uint32_t ready_queue_capacity_ = 1024;
-inline constexpr uint32_t default_io_uring_entries = ready_queue_capacity_ << 1;
+// A scheduler owns one ring, so keep the default small enough for several
+// schedulers under a normal RLIMIT_MEMLOCK. SQ pressure is handled by
+// scheduler_state::ensure_sq_space().
+inline constexpr uint32_t default_io_uring_entries = 256;
 
 } // namespace mira::co::tuning
 
