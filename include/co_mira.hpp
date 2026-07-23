@@ -8,6 +8,7 @@
 #include "net.hpp"
 #include "scheduler.hpp"
 #include "task.hpp"
+#include "when_all.hpp"
 #include "yield.hpp"
 
 #endif
