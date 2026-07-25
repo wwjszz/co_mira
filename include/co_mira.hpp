@@ -9,6 +9,8 @@
 #include "scheduler.hpp"
 #include "task.hpp"
 #include "when_all.hpp"
+#include "when_any.hpp"
+#include "when_some.hpp"
 #include "yield.hpp"
 
 #endif

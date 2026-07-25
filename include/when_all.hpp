@@ -125,7 +125,7 @@ public:
 
   [[nodiscard]] bool count_down() noexcept {
     if constexpr (ThreadSafe) {
-      const std::size_t previous = this->remaining_.fetch_sub(1, std::memory_order_acq_rel);
+      const std::size_t previous = this->remaining_.fetch_sub(1, std::memory_order_release);
       assert(previous != 0);
       return previous == 1;
     } else {
@@ -165,7 +165,14 @@ template <typename Meta> struct when_all_waiter {
 
   void await_suspend(co_handle<> continuation) noexcept { this->meta.set_continuation(continuation); }
 
-  static constexpr void await_resume() noexcept {}
+  void await_resume() const noexcept {
+    // The parent is the consumer of every result slot. Its single acquire
+    // observes the release sequence formed by all child count-down RMWs.
+    if (!this->meta.completed()) [[unlikely]] {
+      log("when_all parent resumed before all results were published");
+      std::terminate();
+    }
+  }
 };
 
 template <bool ThreadSafe, std::size_t Index, typename Meta, typename Awaitable>
@@ -186,8 +193,7 @@ task<void> when_all_evaluate(Meta &meta, Awaitable awaitable, scheduler &sche) n
   }
 
   if constexpr (!ThreadSafe)
-    assert(this_thread.sche == &sche &&
-           "when_all<false> child must complete on the origin scheduler");
+    assert(this_thread.sche == &sche && "when_all<false> child must complete on the origin scheduler");
 
   if (!meta.count_down())
     co_return;
@@ -209,18 +215,13 @@ void spawn_when_all_child(scheduler &sche, Meta &meta, Awaitable &&awaitable) no
   // converts a partial co_spawn() failure into termination, matching the
   // scheduler's current hard-failure policy without leaving children that
   // reference a destroyed when_all coroutine frame.
-  auto child =
-      when_all_evaluate<ThreadSafe, Index>(meta, std::forward<Awaitable>(awaitable), sche);
+  auto child = when_all_evaluate<ThreadSafe, Index>(meta, std::forward<Awaitable>(awaitable), sche);
   sche.co_spawn(std::move(child));
 }
 
-template <bool ThreadSafe, typename... Awaitables>
-using when_all_meta_t =
-    when_all_meta<ThreadSafe, when_all_await_result_t<Awaitables &&>...>;
+template <bool ThreadSafe, typename... Awaitables> using when_all_meta_t = when_all_meta<ThreadSafe, when_all_await_result_t<Awaitables &&>...>;
 
-template <typename... Awaitables>
-using when_all_result_t =
-    typename when_all_meta<false, when_all_await_result_t<Awaitables &&>...>::result_type;
+template <typename... Awaitables> using when_all_result_t = typename when_all_meta<false, when_all_await_result_t<Awaitables &&>...>::result_type;
 
 } // namespace mira::co::core
 
@@ -233,8 +234,7 @@ namespace mira::co {
 // child can leave, the origin must be started with start_remote(). The
 // when_all<false>() fast path uses a plain counter and requires every child to
 // complete on the origin scheduler.
-template <bool ThreadSafe = true, typename... Awaitables>
-task<core::when_all_result_t<Awaitables...>> when_all(Awaitables... awaitables) {
+template <bool ThreadSafe = true, typename... Awaitables> task<core::when_all_result_t<Awaitables...>> when_all(Awaitables... awaitables) {
   if (core::this_thread.sche == nullptr || core::this_thread.sche_state == nullptr) [[unlikely]] {
     log("when_all requires a scheduler host thread");
     throw std::logic_error("when_all requires a scheduler host thread");
@@ -246,9 +246,7 @@ task<core::when_all_result_t<Awaitables...>> when_all(Awaitables... awaitables) 
   scheduler &sche = *core::this_thread.sche;
 
   [&]<std::size_t... Index>(std::index_sequence<Index...>) {
-    (core::spawn_when_all_child<ThreadSafe, Index>(
-         sche, meta, std::move(std::get<Index>(inputs))),
-     ...);
+    (core::spawn_when_all_child<ThreadSafe, Index>(sche, meta, std::move(std::get<Index>(inputs))), ...);
   }(std::index_sequence_for<Awaitables...>{});
 
   co_await core::when_all_waiter<meta_type>{meta};
