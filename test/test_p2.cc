@@ -45,8 +45,10 @@ static_assert(noexcept(mira::co::io::with_timeout(std::declval<nop_chain &&>(), 
 static_assert(!noexcept(mira::co::io::with_timeout(std::declval<throwing_move_action &&>(), std::declval<std::chrono::milliseconds>())));
 static_assert(std::is_move_constructible_v<nop_action>);
 static_assert(!std::is_move_assignable_v<nop_action>);
-static_assert(!std::copy_constructible<mira::co::io::cancel_token>);
-static_assert(!std::move_constructible<mira::co::io::cancel_token>);
+static_assert(std::copy_constructible<mira::co::io::cancel_token>);
+static_assert(std::move_constructible<mira::co::io::cancel_token>);
+static_assert(!std::copy_constructible<mira::co::io::cancel_source>);
+static_assert(std::move_constructible<mira::co::io::cancel_source>);
 
 class test_failure : public std::runtime_error {
 public:
@@ -120,6 +122,29 @@ task<void> await_connect(int fd, const sockaddr_in &address, int32_t &result) {
 task<void> cancel_after_delay(mira::co::io::cancel_token &token, int32_t &result, std::chrono::milliseconds delay) {
   (void)co_await mira::co::io::sleep_for(delay);
   result = co_await mira::co::io::cancel(token);
+}
+
+task<void> await_owned_cancellable_recv(int fd, mira::co::io::cancel_token token, int32_t &result) {
+  std::array<char, 8> buffer{};
+  auto operation = mira::co::io::recv(fd, buffer, token);
+  token = mira::co::io::cancel_token{};
+  result = co_await std::move(operation);
+}
+
+task<void> cancel_owned_after_delay(mira::co::io::cancel_token token, int32_t &result, std::chrono::milliseconds delay) {
+  (void)co_await mira::co::io::sleep_for(delay);
+  auto operation = mira::co::io::cancel(token);
+  token = mira::co::io::cancel_token{};
+  result = co_await std::move(operation);
+}
+
+task<void> await_nop_from_temporary_source(int32_t &result) {
+  auto operation = [] {
+    mira::co::io::cancel_source source;
+    return mira::co::io::nop(source.get_token());
+  }();
+
+  result = co_await std::move(operation);
 }
 
 task<void> await_sleep(std::chrono::nanoseconds duration, int32_t &result, std::chrono::steady_clock::duration &elapsed) {
@@ -338,6 +363,50 @@ void test_cancel_rejects_unbound_and_reused_tokens() {
   CHECK(std::string_view(reuse_error.what()) == "cancel token is already bound to an operation");
 }
 
+void test_cancel_source_owns_state_through_cqes() {
+  int sockets[2]{-1, -1};
+  CHECK(::socketpair(AF_UNIX, SOCK_STREAM, 0, sockets) == 0);
+
+  int32_t recv_result = 0;
+  int32_t cancel_result = -1;
+  scheduler sche;
+
+  {
+    mira::co::io::cancel_source source;
+    auto target_token = source.get_token();
+    auto cancel_token = source.get_token();
+
+    sche.co_spawn(await_owned_cancellable_recv(sockets[0], std::move(target_token), recv_result));
+    sche.co_spawn(cancel_owned_after_delay(std::move(cancel_token), cancel_result, 1ms));
+  }
+
+  sche.start();
+  sche.join();
+
+  CHECK(cancel_result == 0);
+  CHECK(recv_result == -ECANCELED || recv_result == -EINTR);
+  CHECK(::close(sockets[0]) == 0);
+  CHECK(::close(sockets[1]) == 0);
+}
+
+void test_cancel_source_observes_shared_state() {
+  mira::co::io::cancel_source source;
+  auto token = source.get_token();
+  int32_t result = -1;
+
+  run_scheduler(await_cancellable_nop(token, result));
+
+  CHECK(result == 0);
+  CHECK(source.completed());
+  CHECK(token.completed());
+}
+
+void test_operation_owns_temporary_cancel_state() {
+  int32_t result = -1;
+  run_scheduler(await_nop_from_temporary_source(result));
+  CHECK(result == 0);
+}
+
 void test_action_completes_before_timeout() {
   timeout_result result{};
   run_scheduler(await_nop_with_timeout(result));
@@ -463,6 +532,9 @@ int main() {
   run_test("cancel completed operation", test_cancel_completed_operation);
   run_test("cancel linked operation", test_cancel_linked_operation);
   run_test("cancel token validation", test_cancel_rejects_unbound_and_reused_tokens);
+  run_test("cancel source owns state through CQEs", test_cancel_source_owns_state_through_cqes);
+  run_test("cancel source observes shared state", test_cancel_source_observes_shared_state);
+  run_test("operation owns temporary cancel state", test_operation_owns_temporary_cancel_state);
   run_test("action completes before timeout", test_action_completes_before_timeout);
   run_test("action failure cancels timeout", test_action_failure_cancels_timeout);
   run_test("timeout cancels pending recv", test_timeout_cancels_pending_recv);

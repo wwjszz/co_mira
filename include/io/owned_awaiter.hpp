@@ -14,7 +14,7 @@ namespace mira::co::core {
 // call await_resume() for every member, so they cannot finalize this ownership
 // transfer safely yet.
 struct [[nodiscard]] io_close_owned {
-  explicit io_close_owned(io::unique_fd fd, cancel_token *token = nullptr) noexcept : fd_(std::move(fd)), operation_(this->fd_.get(), token) {}
+  explicit io_close_owned(io::unique_fd fd, const cancel_token *token = nullptr) noexcept : fd_(std::move(fd)), operation_(this->fd_.get(), token) {}
 
   static constexpr bool await_ready() noexcept { return false; }
   void await_suspend(co_handle<> handle) { this->operation_.await_suspend(handle); }

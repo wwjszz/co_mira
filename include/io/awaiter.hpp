@@ -60,7 +60,7 @@ struct io_awaiter {
 
 protected:
   void validate_cancel_token() const {
-    if (this->cancel_token_ && this->cancel_token_->state_ != cancel_token::state::unbound) [[unlikely]] {
+    if (this->cancel_state_ && this->cancel_state_->phase_ != cancel_state::phase::unbound) [[unlikely]] {
       log("cancel token is already bound to an operation");
       throw std::logic_error("cancel token is already bound to an operation");
     }
@@ -81,10 +81,9 @@ protected:
   }
 
   void bind_cancel_token(io_uring_sqe *sqe) noexcept {
-    if (auto &ck = this->cancel_token_) {
-      ck->mark_submitted();
-      ck->user_data_ = sqe->user_data;
-      this->io_info.token = ck;
+    if (auto &state = this->cancel_state_) {
+      state->mark_submitted(sqe->user_data);
+      this->io_info.cancel = state.get();
     }
   }
 
@@ -106,12 +105,12 @@ protected:
   io_awaiter(io_awaiter &&) = default;
   io_awaiter &operator=(io_awaiter &&) = delete;
 
-  io_awaiter(cancel_token *token = nullptr) noexcept : cancel_token_(token) {}
+  io_awaiter(const cancel_token *token = nullptr) noexcept : cancel_state_(token ? token->state_ : nullptr) {}
   ~io_awaiter() = default;
 
 private:
   task_info io_info;
-  cancel_token *cancel_token_;
+  std::shared_ptr<cancel_state> cancel_state_;
 };
 
 // An owning soft-link chain. operator&& maps to IOSQE_IO_LINK: an earlier
@@ -214,12 +213,12 @@ inline auto operator&&(linked_io_awaiter<LeftAction...> &&left, linked_io_awaite
 }
 
 struct [[nodiscard]] io_nop : io_awaiter {
-  io_nop(cancel_token *token = nullptr) noexcept : io_awaiter(token) {}
+  io_nop(const cancel_token *token = nullptr) noexcept : io_awaiter(token) {}
   void prepare(io_uring_sqe *sqe) noexcept { io_uring_prep_nop(sqe); }
 };
 
 struct [[nodiscard]] io_accept : io_awaiter {
-  io_accept(int fd_, struct sockaddr *addr, socklen_t *addrlen, int flags, cancel_token *token = nullptr) noexcept
+  io_accept(int fd_, struct sockaddr *addr, socklen_t *addrlen, int flags, const cancel_token *token = nullptr) noexcept
       : io_awaiter(token), fd_(fd_), addr_(addr), addrlen_(addrlen), flags_(flags) {}
   void prepare(io_uring_sqe *sqe) noexcept { io_uring_prep_accept(sqe, this->fd_, this->addr_, this->addrlen_, this->flags_); }
 
@@ -231,7 +230,7 @@ private:
 };
 
 struct [[nodiscard]] io_connect : io_awaiter {
-  io_connect(int fd, const struct sockaddr *addr, socklen_t addrlen, cancel_token *token = nullptr) noexcept
+  io_connect(int fd, const struct sockaddr *addr, socklen_t addrlen, const cancel_token *token = nullptr) noexcept
       : io_awaiter(token), fd_(fd), addr_(addr), addrlen_(addrlen) {}
   void prepare(io_uring_sqe *sqe) noexcept { io_uring_prep_connect(sqe, this->fd_, this->addr_, this->addrlen_); }
 
@@ -242,7 +241,7 @@ private:
 };
 
 struct [[nodiscard]] io_close : io_awaiter {
-  explicit io_close(int fd_, cancel_token *token = nullptr) noexcept : io_awaiter(token), fd_(fd_) {}
+  explicit io_close(int fd_, const cancel_token *token = nullptr) noexcept : io_awaiter(token), fd_(fd_) {}
   void prepare(io_uring_sqe *sqe) noexcept { io_uring_prep_close(sqe, this->fd_); }
 
 private:
@@ -250,7 +249,7 @@ private:
 };
 
 struct [[nodiscard]] io_readv : io_awaiter {
-  io_readv(int fd, std::span<const iovec> iovecs, uint64_t offset, cancel_token *token = nullptr) noexcept
+  io_readv(int fd, std::span<const iovec> iovecs, uint64_t offset, const cancel_token *token = nullptr) noexcept
       : io_awaiter(token), fd_(fd), iovecs_(iovecs), offset_(offset) {}
   void prepare(io_uring_sqe *sqe) noexcept { io_uring_prep_readv(sqe, this->fd_, this->iovecs_.data(), this->iovecs_.size(), this->offset_); }
 
@@ -261,7 +260,7 @@ private:
 };
 
 struct [[nodiscard]] io_writev : io_awaiter {
-  io_writev(int fd, std::span<const iovec> iovecs, uint64_t offset, cancel_token *token = nullptr) noexcept
+  io_writev(int fd, std::span<const iovec> iovecs, uint64_t offset, const cancel_token *token = nullptr) noexcept
       : io_awaiter(token), fd_(fd), iovecs_(iovecs), offset_(offset) {}
   void prepare(io_uring_sqe *sqe) noexcept { io_uring_prep_writev(sqe, this->fd_, this->iovecs_.data(), this->iovecs_.size(), this->offset_); }
 
@@ -272,7 +271,7 @@ private:
 };
 
 struct [[nodiscard]] io_recv : io_awaiter {
-  io_recv(int fd, std::span<char> buf, int flags, cancel_token *token = nullptr) noexcept : io_awaiter(token), fd_(fd), buf_(buf), flags_(flags) {}
+  io_recv(int fd, std::span<char> buf, int flags, const cancel_token *token = nullptr) noexcept : io_awaiter(token), fd_(fd), buf_(buf), flags_(flags) {}
   void prepare(io_uring_sqe *sqe) noexcept { io_uring_prep_recv(sqe, this->fd_, this->buf_.data(), this->buf_.size(), this->flags_); }
 
 private:
@@ -282,7 +281,7 @@ private:
 };
 
 struct [[nodiscard]] io_send : io_awaiter {
-  io_send(int fd, std::span<const char> buf, int flags, cancel_token *token = nullptr) noexcept
+  io_send(int fd, std::span<const char> buf, int flags, const cancel_token *token = nullptr) noexcept
       : io_awaiter(token), fd_(fd), buf_(buf), flags_(flags) {}
   void prepare(io_uring_sqe *sqe) noexcept { io_uring_prep_send(sqe, this->fd_, this->buf_.data(), this->buf_.size(), this->flags_); }
 
@@ -293,7 +292,7 @@ private:
 };
 
 struct [[nodiscard]] io_recvmsg : io_awaiter {
-  io_recvmsg(int fd, msghdr *msg, unsigned int flags, cancel_token *token = nullptr) noexcept
+  io_recvmsg(int fd, msghdr *msg, unsigned int flags, const cancel_token *token = nullptr) noexcept
       : io_awaiter(token), fd_(fd), msg_(msg), flags_(flags) {}
   void prepare(io_uring_sqe *sqe) noexcept { io_uring_prep_recvmsg(sqe, fd_, msg_, flags_); }
 
@@ -304,7 +303,7 @@ private:
 };
 
 struct [[nodiscard]] io_sendmsg : io_awaiter {
-  io_sendmsg(int fd, msghdr *msg, unsigned int flags, cancel_token *token = nullptr) noexcept
+  io_sendmsg(int fd, msghdr *msg, unsigned int flags, const cancel_token *token = nullptr) noexcept
       : io_awaiter(token), fd_(fd), msg_(msg), flags_(flags) {}
   void prepare(io_uring_sqe *sqe) noexcept { io_uring_prep_sendmsg(sqe, fd_, msg_, flags_); }
 
@@ -315,20 +314,25 @@ private:
 };
 
 struct [[nodiscard]] io_cancel : io_awaiter {
-  explicit io_cancel(cancel_token &token) : token_(&token) {
-    if (token.state_ == cancel_token::state::unbound) {
+  explicit io_cancel(const cancel_token &token) : target_state_(token.state_) {
+    if (!this->target_state_) {
+      log("cannot cancel with a moved-from cancel token");
+      throw std::logic_error("cannot cancel with a moved-from cancel token");
+    }
+
+    if (this->target_state_->phase_ == cancel_state::phase::unbound) {
       log("cannot cancel an operation before submission");
       throw std::logic_error("cannot cancel an operation before submission");
     }
   }
 
   bool await_ready() noexcept {
-    this->completed_before_submit_ = this->token_->completed();
+    this->completed_before_submit_ = this->target_state_->completed();
 
     return this->completed_before_submit_;
   }
 
-  void prepare(io_uring_sqe *sqe) noexcept { io_uring_prep_cancel64(sqe, this->token_->user_data_, 0); }
+  void prepare(io_uring_sqe *sqe) noexcept { io_uring_prep_cancel64(sqe, this->target_state_->user_data_, 0); }
 
   int32_t await_resume() const noexcept {
     if (this->completed_before_submit_)
@@ -338,7 +342,7 @@ struct [[nodiscard]] io_cancel : io_awaiter {
   }
 
 private:
-  cancel_token *token_;
+  std::shared_ptr<cancel_state> target_state_;
   bool completed_before_submit_ = false;
 };
 
@@ -374,11 +378,11 @@ template <typename Rep, typename Period> __kernel_timespec to_kernel_timespec(st
 
 struct [[nodiscard]] io_timeout_base : io_awaiter {
 protected:
-  io_timeout_base(__kernel_timespec ts, unsigned int count, unsigned int flags, cancel_token *token = nullptr) noexcept
+  io_timeout_base(__kernel_timespec ts, unsigned int count, unsigned int flags, const cancel_token *token = nullptr) noexcept
       : io_awaiter(token), ts_(ts), count_(count), flags_(flags) {}
 
   template <typename Rep, typename Period>
-  io_timeout_base(std::chrono::duration<Rep, Period> duration, unsigned int count, unsigned int flags, cancel_token *token = nullptr)
+  io_timeout_base(std::chrono::duration<Rep, Period> duration, unsigned int count, unsigned int flags, const cancel_token *token = nullptr)
       : io_awaiter(token), ts_(to_kernel_timespec(duration)), count_(count), flags_(flags) {}
 
   __kernel_timespec ts_;
@@ -387,22 +391,22 @@ protected:
 };
 
 struct [[nodiscard]] io_timeout : io_timeout_base {
-  io_timeout(__kernel_timespec ts, unsigned int count, unsigned int flags, cancel_token *token = nullptr) noexcept
+  io_timeout(__kernel_timespec ts, unsigned int count, unsigned int flags, const cancel_token *token = nullptr) noexcept
       : io_timeout_base(ts, count, flags, token) {}
 
   template <typename Rep, typename Period>
-  io_timeout(std::chrono::duration<Rep, Period> duration, unsigned int count, unsigned int flags, cancel_token *token = nullptr)
+  io_timeout(std::chrono::duration<Rep, Period> duration, unsigned int count, unsigned int flags, const cancel_token *token = nullptr)
       : io_timeout_base(duration, count, flags, token) {}
 
   void prepare(io_uring_sqe *sqe) noexcept { io_uring_prep_timeout(sqe, &this->ts_, this->count_, this->flags_); }
 };
 
 struct [[nodiscard]] io_link_timeout : io_timeout_base {
-  io_link_timeout(__kernel_timespec ts, unsigned int count, unsigned int flags, cancel_token *token = nullptr) noexcept
+  io_link_timeout(__kernel_timespec ts, unsigned int count, unsigned int flags, const cancel_token *token = nullptr) noexcept
       : io_timeout_base(ts, count, flags, token) {}
 
   template <typename Rep, typename Period>
-  io_link_timeout(std::chrono::duration<Rep, Period> duration, unsigned int count, unsigned int flags, cancel_token *token = nullptr)
+  io_link_timeout(std::chrono::duration<Rep, Period> duration, unsigned int count, unsigned int flags, const cancel_token *token = nullptr)
       : io_timeout_base(duration, count, flags, token) {}
 
   void prepare(io_uring_sqe *sqe) noexcept { io_uring_prep_link_timeout(sqe, &this->ts_, this->flags_); }
@@ -419,12 +423,12 @@ template <typename Awaiter> struct io_with_timeout {
   static_assert(linkable_action<Awaiter>, "Awaiter must be a linkable IO action");
 
   io_with_timeout(Awaiter &&awaiter, __kernel_timespec ts, unsigned int count, unsigned int flags,
-                  cancel_token *token = nullptr) noexcept(std::is_nothrow_move_constructible_v<Awaiter>)
+                  const cancel_token *token = nullptr) noexcept(std::is_nothrow_move_constructible_v<Awaiter>)
       : awaiter_(std::move(awaiter)), timeout_(ts, count, flags, token) {}
 
   template <typename Rep, typename Period>
   io_with_timeout(Awaiter &&awaiter, std::chrono::duration<Rep, Period> duration, unsigned int count, unsigned int flags,
-                  cancel_token *token = nullptr)
+                  const cancel_token *token = nullptr)
       : awaiter_(std::move(awaiter)), timeout_(duration, count, flags, token) {}
 
   static constexpr bool await_ready() noexcept { return false; }
@@ -463,12 +467,12 @@ template <typename... Awaiters> struct [[nodiscard]] io_with_timeout<linked_io_a
   using TimedAwaiter = linked_io_awaiter<Awaiters..., io_link_timeout>;
 
   io_with_timeout(InputAwaiter &&awaiter, __kernel_timespec ts, unsigned int count, unsigned int flags,
-                  cancel_token *token = nullptr) noexcept(std::is_nothrow_move_constructible_v<TimedAwaiter>)
+                  const cancel_token *token = nullptr) noexcept(std::is_nothrow_move_constructible_v<TimedAwaiter>)
       : awaiter_(std::move(awaiter) && io_link_timeout(ts, count, flags, token)) {}
 
   template <typename Rep, typename Period>
   io_with_timeout(InputAwaiter &&awaiter, std::chrono::duration<Rep, Period> duration, unsigned int count, unsigned int flags,
-                  cancel_token *token = nullptr)
+                  const cancel_token *token = nullptr)
       : awaiter_(std::move(awaiter) && io_link_timeout(duration, count, flags, token)) {}
 
   static constexpr bool await_ready() noexcept { return false; }

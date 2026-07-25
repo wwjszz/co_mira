@@ -474,8 +474,8 @@ inline void scheduler_state::handle_cqe(io_uring_cqe *cqe) {
   if (type == utype::task_info_pointer || type == utype::task_info_linked) {
     auto *info = data.task_info_from_user_data();
 
-    if (auto *token = std::exchange(info->token, nullptr))
-      token->mark_completed();
+    if (auto *state = std::exchange(info->cancel, nullptr))
+      state->mark_completed();
 
     info->result = result;
 

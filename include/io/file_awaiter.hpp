@@ -12,7 +12,7 @@
 namespace mira::co::core {
 
 struct [[nodiscard]] io_read : io_awaiter {
-  io_read(int fd, std::span<char> buffer, uint64_t offset, cancel_token *token = nullptr) noexcept
+  io_read(int fd, std::span<char> buffer, uint64_t offset, const cancel_token *token = nullptr) noexcept
       : io_awaiter(token), fd_(fd), buffer_(buffer), offset_(offset) {}
 
   void prepare(io_uring_sqe *sqe) noexcept {
@@ -26,7 +26,7 @@ private:
 };
 
 struct [[nodiscard]] io_write : io_awaiter {
-  io_write(int fd, std::span<const char> buffer, uint64_t offset, cancel_token *token = nullptr) noexcept
+  io_write(int fd, std::span<const char> buffer, uint64_t offset, const cancel_token *token = nullptr) noexcept
       : io_awaiter(token), fd_(fd), buffer_(buffer), offset_(offset) {}
 
   void prepare(io_uring_sqe *sqe) noexcept {
@@ -40,7 +40,7 @@ private:
 };
 
 struct [[nodiscard]] io_openat : io_awaiter {
-  io_openat(int directory_fd, const char *path, int flags, mode_t mode, cancel_token *token = nullptr) noexcept
+  io_openat(int directory_fd, const char *path, int flags, mode_t mode, const cancel_token *token = nullptr) noexcept
       : io_awaiter(token), directory_fd_(directory_fd), path_(path), flags_(flags), mode_(mode) {}
 
   void prepare(io_uring_sqe *sqe) noexcept { io_uring_prep_openat(sqe, this->directory_fd_, this->path_, this->flags_, this->mode_); }
@@ -53,7 +53,7 @@ private:
 };
 
 struct [[nodiscard]] io_fsync : io_awaiter {
-  io_fsync(int fd, unsigned flags, cancel_token *token = nullptr) noexcept : io_awaiter(token), fd_(fd), flags_(flags) {}
+  io_fsync(int fd, unsigned flags, const cancel_token *token = nullptr) noexcept : io_awaiter(token), fd_(fd), flags_(flags) {}
 
   void prepare(io_uring_sqe *sqe) noexcept { io_uring_prep_fsync(sqe, this->fd_, this->flags_); }
 
@@ -63,7 +63,7 @@ private:
 };
 
 struct [[nodiscard]] io_statx : io_awaiter {
-  io_statx(int directory_fd, const char *path, int flags, unsigned mask, struct statx *result, cancel_token *token = nullptr) noexcept
+  io_statx(int directory_fd, const char *path, int flags, unsigned mask, struct statx *result, const cancel_token *token = nullptr) noexcept
       : io_awaiter(token), directory_fd_(directory_fd), path_(path), flags_(flags), mask_(mask), result_(result) {}
 
   void prepare(io_uring_sqe *sqe) noexcept { io_uring_prep_statx(sqe, this->directory_fd_, this->path_, this->flags_, this->mask_, this->result_); }
@@ -77,7 +77,7 @@ private:
 };
 
 struct [[nodiscard]] io_fallocate : io_awaiter {
-  io_fallocate(int fd, int mode, uint64_t offset, uint64_t length, cancel_token *token = nullptr) noexcept
+  io_fallocate(int fd, int mode, uint64_t offset, uint64_t length, const cancel_token *token = nullptr) noexcept
       : io_awaiter(token), fd_(fd), mode_(mode), offset_(offset), length_(length) {}
 
   void prepare(io_uring_sqe *sqe) noexcept { io_uring_prep_fallocate(sqe, this->fd_, this->mode_, this->offset_, this->length_); }
@@ -90,7 +90,7 @@ private:
 };
 
 struct [[nodiscard]] io_unlinkat : io_awaiter {
-  io_unlinkat(int directory_fd, const char *path, int flags, cancel_token *token = nullptr) noexcept
+  io_unlinkat(int directory_fd, const char *path, int flags, const cancel_token *token = nullptr) noexcept
       : io_awaiter(token), directory_fd_(directory_fd), path_(path), flags_(flags) {}
 
   void prepare(io_uring_sqe *sqe) noexcept { io_uring_prep_unlinkat(sqe, this->directory_fd_, this->path_, this->flags_); }
@@ -103,7 +103,7 @@ private:
 
 struct [[nodiscard]] io_renameat : io_awaiter {
   io_renameat(int old_directory_fd, const char *old_path, int new_directory_fd, const char *new_path, unsigned flags,
-              cancel_token *token = nullptr) noexcept
+              const cancel_token *token = nullptr) noexcept
       : io_awaiter(token), old_directory_fd_(old_directory_fd), old_path_(old_path), new_directory_fd_(new_directory_fd), new_path_(new_path),
         flags_(flags) {}
 
@@ -120,7 +120,7 @@ private:
 };
 
 struct [[nodiscard]] io_mkdirat : io_awaiter {
-  io_mkdirat(int directory_fd, const char *path, mode_t mode, cancel_token *token = nullptr) noexcept
+  io_mkdirat(int directory_fd, const char *path, mode_t mode, const cancel_token *token = nullptr) noexcept
       : io_awaiter(token), directory_fd_(directory_fd), path_(path), mode_(mode) {}
 
   void prepare(io_uring_sqe *sqe) noexcept { io_uring_prep_mkdirat(sqe, this->directory_fd_, this->path_, this->mode_); }

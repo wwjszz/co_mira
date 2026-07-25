@@ -18,7 +18,7 @@ namespace mira::co::net {
 namespace detail {
 
 struct [[nodiscard]] connect_operation : core::io_awaiter {
-  connect_operation(int fd, inet_address address, core::cancel_token *token = nullptr) noexcept
+  connect_operation(int fd, inet_address address, const core::cancel_token *token = nullptr) noexcept
       : core::io_awaiter(token), fd_(fd), address_(std::move(address)) {}
 
   void prepare(io_uring_sqe *sqe) noexcept { io_uring_prep_connect(sqe, this->fd_, this->address_.data(), this->address_.length()); }
@@ -90,13 +90,13 @@ public:
     return detail::connect_operation{this->native_handle(), std::move(address)};
   }
 
-  [[nodiscard]] detail::connect_operation connect(inet_address address, io::cancel_token &token) const noexcept {
+  [[nodiscard]] detail::connect_operation connect(inet_address address, const io::cancel_token &token) const noexcept {
     return detail::connect_operation{this->native_handle(), std::move(address), &token};
   }
 
   [[nodiscard]] core::io_recv recv(std::span<char> buffer, int flags = 0) const noexcept { return io::recv(this->native_handle(), buffer, flags); }
 
-  [[nodiscard]] core::io_recv recv(std::span<char> buffer, io::cancel_token &token, int flags = 0) const noexcept {
+  [[nodiscard]] core::io_recv recv(std::span<char> buffer, const io::cancel_token &token, int flags = 0) const noexcept {
     return io::recv(this->native_handle(), buffer, token, flags);
   }
 
@@ -104,7 +104,7 @@ public:
     return io::send(this->native_handle(), buffer, flags);
   }
 
-  [[nodiscard]] core::io_send send(std::span<const char> buffer, io::cancel_token &token, int flags = 0) const noexcept {
+  [[nodiscard]] core::io_send send(std::span<const char> buffer, const io::cancel_token &token, int flags = 0) const noexcept {
     return io::send(this->native_handle(), buffer, token, flags);
   }
 

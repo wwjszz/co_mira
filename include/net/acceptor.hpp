@@ -23,7 +23,7 @@ public:
 
   [[nodiscard]] core::io_accept accept(int flags = SOCK_CLOEXEC) const noexcept { return io::accept(this->native_handle(), nullptr, nullptr, flags); }
 
-  [[nodiscard]] core::io_accept accept(io::cancel_token &token, int flags = SOCK_CLOEXEC) const noexcept {
+  [[nodiscard]] core::io_accept accept(const io::cancel_token &token, int flags = SOCK_CLOEXEC) const noexcept {
     return io::accept(this->native_handle(), nullptr, nullptr, token, flags);
   }
 
