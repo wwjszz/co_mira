@@ -7,6 +7,7 @@
 #include "io.hpp"
 #include "net.hpp"
 #include "scheduler.hpp"
+#include "shared_task.hpp"
 #include "sync.hpp"
 #include "task.hpp"
 #include "when_all.hpp"
