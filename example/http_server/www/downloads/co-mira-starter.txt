@@ -1,0 +1,35 @@
+co_mira HTTP server starter note
+================================
+
+Run
+---
+
+  cmake -S . -B build -DBUILD_TESTING=ON
+  cmake --build build --target co_http_server
+  ./build/example/co_http_server 8080 4
+
+Routes
+------
+
+  /                                  HTML landing page
+  /assets/style.css                  stylesheet
+  /assets/app.js                     live metrics client
+  /benchmark                         fixed OK response for load testing
+  /api/status                        runtime status JSON
+  /download/co-mira-starter.txt      this attachment
+  /download/sample-data.json         sample JSON attachment
+
+Architecture
+------------
+
+One front scheduler accepts TCP connections. A round-robin pool of scheduler
+threads receives connection coroutine frames through IORING_OP_MSG_RING. Each
+connection remains on its selected worker for recv/send and HTTP keep-alive.
+
+Press Ctrl-C to stop. SIGINT and SIGTERM are consumed through signalfd and an
+io_uring read, so shutdown occurs inside the scheduler model.
+
+Benchmark
+---------
+
+  wrk -t2 -c64 -d30s --latency http://172.31.128.217:18081/benchmark

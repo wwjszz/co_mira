@@ -3,6 +3,8 @@ cmake_minimum_required(VERSION 3.20)
 project(co_mira LANGUAGES CXX)
 include(CTest)
 
+option(CO_MIRA_BUILD_EXAMPLES "Build co_mira examples" ON)
+
 # Cross-scheduler wakeup and submission are MSG_RING-only. There is no eventfd
 # fallback, so reject unsupported target kernels during configuration.
 set(CO_MIRA_MINIMUM_KERNEL_VERSION "5.19")
@@ -116,3 +118,7 @@ foreach(TEST_SOURCE IN LISTS TEST_SOURCES)
         "${TEST_BIN_DIR}"
   )
 endforeach()
+
+if(CO_MIRA_BUILD_EXAMPLES)
+  add_subdirectory(example)
+endif()
