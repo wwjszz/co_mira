@@ -205,6 +205,18 @@ task<void> await_linked_nops_with_timeout(timeout_result &result) {
   result = co_await mira::co::io::with_timeout(std::move(chain), 100ms);
 }
 
+task<void> await_linked_recv_timeout(int fd, timeout_result &result) {
+  std::array<char, 8> buffer{};
+  auto chain = mira::co::io::nop() && mira::co::io::nop() && mira::co::io::recv(fd, buffer);
+  result = co_await mira::co::io::with_timeout(std::move(chain), 1ms);
+}
+
+task<void> await_counted_recv_timeout(int fd, timeout_result &result, int &completed) {
+  std::array<char, 8> buffer{};
+  result = co_await mira::co::io::with_timeout(mira::co::io::recv(fd, buffer), 1ms);
+  ++completed;
+}
+
 void test_public_nop() {
   int32_t result = -1;
   run_scheduler(await_nop(result));
@@ -457,6 +469,51 @@ void test_failed_linked_chain_cancels_remaining_operations() {
   CHECK(!result.timed_out());
 }
 
+void test_linked_chain_waits_for_every_timeout_cqe() {
+  int sockets[2]{-1, -1};
+  CHECK(::socketpair(AF_UNIX, SOCK_STREAM, 0, sockets) == 0);
+
+  timeout_result result{
+      .action_result = std::numeric_limits<int32_t>::min(),
+      .timeout_result = std::numeric_limits<int32_t>::min(),
+  };
+  run_scheduler(await_linked_recv_timeout(sockets[0], result));
+
+  CHECK(result.action_result == -ECANCELED || result.action_result == -EINTR);
+  CHECK(result.timeout_result == -ETIME);
+  CHECK(result.timed_out());
+  CHECK(::close(sockets[0]) == 0);
+  CHECK(::close(sockets[1]) == 0);
+}
+
+void test_concurrent_with_timeout_completion_groups() {
+  constexpr std::size_t operation_count = 64;
+  constexpr int32_t sentinel = std::numeric_limits<int32_t>::min();
+  std::array<std::array<int, 2>, operation_count> sockets{};
+  std::array<timeout_result, operation_count> results{};
+  int completed = 0;
+  scheduler sche;
+
+  for (std::size_t index = 0; index < operation_count; ++index) {
+    sockets[index] = {-1, -1};
+    results[index] = {.action_result = sentinel, .timeout_result = sentinel};
+    CHECK(::socketpair(AF_UNIX, SOCK_STREAM, 0, sockets[index].data()) == 0);
+    sche.co_spawn(await_counted_recv_timeout(sockets[index][0], results[index], completed));
+  }
+
+  sche.start();
+  sche.join();
+
+  CHECK(completed == static_cast<int>(operation_count));
+  for (std::size_t index = 0; index < operation_count; ++index) {
+    CHECK(results[index].action_result == -ECANCELED || results[index].action_result == -EINTR);
+    CHECK(results[index].timeout_result == -ETIME);
+    CHECK(results[index].timed_out());
+    CHECK(::close(sockets[index][0]) == 0);
+    CHECK(::close(sockets[index][1]) == 0);
+  }
+}
+
 void test_recvmsg_sendmsg_round_trip() {
   int sockets[2]{-1, -1};
   CHECK(::socketpair(AF_UNIX, SOCK_STREAM, 0, sockets) == 0);
@@ -540,6 +597,8 @@ int main() {
   run_test("timeout cancels pending recv", test_timeout_cancels_pending_recv);
   run_test("linked chain completes before timeout", test_linked_chain_completes_before_timeout);
   run_test("failed linked chain", test_failed_linked_chain_cancels_remaining_operations);
+  run_test("linked chain waits for every timeout CQE", test_linked_chain_waits_for_every_timeout_cqe);
+  run_test("concurrent with_timeout completion groups", test_concurrent_with_timeout_completion_groups);
   run_test("recvmsg/sendmsg round trip", test_recvmsg_sendmsg_round_trip);
   run_test("connect success and failure", test_connect_success_and_failure);
   run_test("concurrent timeout batch", test_concurrent_timeout_batch);

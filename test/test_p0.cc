@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <exception>
 #include <iostream>
+#include <limits>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -17,8 +18,13 @@
 namespace {
 
 using mira::co::scheduler;
+using mira::co::scheduler_config;
 using mira::co::task;
 using mira::co::core::scheduler_test_failure;
+
+static_assert(scheduler_config{}.io_uring_entries == mira::co::tuning::default_io_uring_entries);
+static_assert(scheduler_config{}.io_uring_setup_flags ==
+              (IORING_SETUP_COOP_TASKRUN | IORING_SETUP_TASKRUN_FLAG));
 
 class test_failure : public std::runtime_error {
 public:
@@ -166,6 +172,28 @@ void test_invalid_scheduler_states() {
   (void)check_throws<std::logic_error>([&] { started_twice.join(); });
 }
 
+void test_scheduler_accepts_custom_ring_config() {
+  scheduler sche(scheduler_config{
+      .io_uring_entries = 32,
+      .io_uring_setup_flags = 0,
+  });
+  sche.co_spawn(no_op());
+  sche.start();
+  sche.join();
+}
+
+void test_scheduler_forwards_invalid_setup_flags() {
+  scheduler sche(scheduler_config{
+      .io_uring_entries = 32,
+      .io_uring_setup_flags = std::numeric_limits<unsigned>::max(),
+  });
+  sche.co_spawn(no_op());
+  sche.start();
+  auto error = check_throws<std::system_error>([&] { sche.join(); });
+  CHECK(error.code().value() == EINVAL);
+  CHECK(std::string_view(error.what()).find("io_uring_queue_init") != std::string_view::npos);
+}
+
 void test_worker_init_failure_reaches_join() {
   scheduler sche(scheduler_test_failure::init);
   sche.co_spawn(no_op());
@@ -203,6 +231,8 @@ int main() {
   run_test("fixed queue move-only values", test_fixed_queue_move_only_values);
   run_test("fixed queue push rollback", test_fixed_queue_push_rolls_back_on_assignment_failure);
   run_test("invalid scheduler states", test_invalid_scheduler_states);
+  run_test("scheduler accepts custom ring config", test_scheduler_accepts_custom_ring_config);
+  run_test("scheduler forwards invalid setup flags", test_scheduler_forwards_invalid_setup_flags);
   run_test("worker init failure reaches join", test_worker_init_failure_reaches_join);
   run_test("worker submit failure reaches join", test_worker_submit_failure_reaches_join);
   run_test("IO awaiter failure reaches join", test_io_awaiter_failure_reaches_join);

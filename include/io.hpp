@@ -31,7 +31,10 @@ using cancel_source = core::cancel_source;
 // be destroyed earlier. cancel_source::get_token() creates a copyable handle;
 // directly constructed cancel_token remains supported. Bind tokens to actions
 // before wrapping them in with_timeout(); with_timeout() itself does not
-// represent one independently cancellable operation.
+// represent one independently cancellable operation. with_timeout() consumes
+// every action/timeout CQE before resuming the coroutine. When its action is a
+// linked chain, the kernel link timeout is attached to the final action; it
+// bounds that action rather than the total elapsed time of the whole chain.
 
 inline core::io_nop nop() noexcept { return core::io_nop{}; }
 

@@ -121,6 +121,7 @@ private:
 template <typename... Awaiters>
   requires((std::is_base_of_v<io_awaiter, Awaiters> && linkable_action<Awaiters>) && ...)
 struct [[nodiscard]] linked_io_awaiter {
+  template <typename Awaiter> friend struct io_with_timeout;
 
   template <linkable_action Left, linkable_action Right>
     requires(!std::is_lvalue_reference_v<Left> && !std::is_lvalue_reference_v<Right>)
@@ -162,7 +163,7 @@ struct [[nodiscard]] linked_io_awaiter {
 private:
   std::tuple<Awaiters...> awaiters;
 
-  void prepare_all(co_handle<> handle) {
+  void prepare_all(co_handle<> handle, linked_completion_state *completion = nullptr) {
     constexpr std::size_t sz = sizeof...(Awaiters);
 
     auto sche_state = this_thread.sche_state;
@@ -170,6 +171,12 @@ private:
       (std::get<Index>(awaiters).validate_cancel_token(), ...);
     }(std::index_sequence_for<Awaiters...>{});
     sche_state->ensure_sq_space(sz);
+
+    if (completion != nullptr) {
+      [&]<std::size_t... Index>(std::index_sequence<Index...>) {
+        ((std::get<Index>(awaiters).io_info.completion = completion), ...);
+      }(std::index_sequence_for<Awaiters...>{});
+    }
 
     [&]<std::size_t... Index>(std::index_sequence<Index...>) {
       (this->prepare_one<Index>(sche_state, handle), ...);
@@ -438,6 +445,9 @@ template <typename Awaiter> struct io_with_timeout {
     this->awaiter_.validate_cancel_token();
     this->timeout_.validate_cancel_token();
     sche_state->ensure_sq_space(2);
+    this->completion_.start(handle, 2);
+    this->awaiter_.io_info.completion = &this->completion_;
+    this->timeout_.io_info.completion = &this->completion_;
 
     auto sqe1 = sche_state->get_free_sqe();
     this->awaiter_.prep_sqe_link(sqe1);
@@ -459,8 +469,11 @@ template <typename Awaiter> struct io_with_timeout {
 private:
   Awaiter awaiter_;
   io_link_timeout timeout_;
+  linked_completion_state completion_;
 };
 
+// WARNING: a link timeout appended to a linked chain is armed for the final
+// action only. It does not bound the total elapsed time of the whole chain.
 template <typename... Awaiters> struct [[nodiscard]] io_with_timeout<linked_io_awaiter<Awaiters...>> {
   using InputAwaiter = linked_io_awaiter<Awaiters...>;
 
@@ -477,7 +490,10 @@ template <typename... Awaiters> struct [[nodiscard]] io_with_timeout<linked_io_a
 
   static constexpr bool await_ready() noexcept { return false; }
 
-  void await_suspend(co_handle<> handle) { this->awaiter_.await_suspend(handle); }
+  void await_suspend(co_handle<> handle) {
+    this->completion_.start(handle, sizeof...(Awaiters) + 1);
+    this->awaiter_.prepare_all(handle, &this->completion_);
+  }
 
   io_with_timeout_result await_resume() const noexcept {
     return io_with_timeout_result{
@@ -494,6 +510,7 @@ template <typename... Awaiters> struct [[nodiscard]] io_with_timeout<linked_io_a
 
 private:
   TimedAwaiter awaiter_;
+  linked_completion_state completion_;
 };
 
 // TODO: support multishot operation

@@ -92,11 +92,29 @@ private:
   std::shared_ptr<cancel_state> state_;
 };
 
+struct linked_completion_state {
+  void start(co_handle<> continuation, uint32_t completion_count) noexcept {
+    assert(completion_count != 0);
+    assert(this->remaining == 0);
+    this->continuation = continuation;
+    this->remaining = completion_count;
+  }
+
+  [[nodiscard]] bool complete_one() noexcept {
+    assert(this->remaining != 0);
+    return --this->remaining == 0;
+  }
+
+  co_handle<> continuation{};
+  uint32_t remaining = 0;
+};
+
 // The low 3 bits of any task_info address are always 0
 struct task_info {
   co_handle<> handle{};
   int32_t result{};
   cancel_state *cancel = nullptr;
+  linked_completion_state *completion = nullptr;
 
   [[nodiscard]] uint64_t as_user_data() const noexcept { return reinterpret_cast<uint64_t>(this); }
 

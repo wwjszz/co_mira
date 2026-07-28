@@ -24,6 +24,12 @@ namespace mira::co {
 
 class scheduler;
 
+struct scheduler_config {
+  unsigned io_uring_entries = tuning::default_io_uring_entries;
+  unsigned io_uring_setup_flags =
+      IORING_SETUP_COOP_TASKRUN | IORING_SETUP_TASKRUN_FLAG;
+};
+
 namespace core {
 
 struct resume_on_awaiter;
@@ -136,7 +142,7 @@ struct scheduler_state {
     }
   }
 
-  void init(unsigned entries);
+  void init(unsigned entries, unsigned setup_flags);
   void deinit() noexcept;
   [[nodiscard]] queue_size_t size() const noexcept;
   void push_handle(co_handle<> handle);
@@ -212,6 +218,7 @@ public:
   };
 
   scheduler() = default;
+  explicit scheduler(scheduler_config config) noexcept : config_(config) {}
 #ifdef CO_MIRA_ENABLE_TESTING
   explicit scheduler(core::scheduler_test_failure failure) noexcept : test_failure_(failure) {}
 #endif
@@ -264,6 +271,7 @@ private:
 
   STATE cur_state_ = STATE::CREATED;
   bool accept_remote_ = false;
+  scheduler_config config_;
   std::atomic<runtime_state> runtime_state_{runtime_state::stopped};
   std::thread host_thread_;
   core::scheduler_state state_;
@@ -310,14 +318,12 @@ private:
   task_info info_;
 };
 
-inline void scheduler_state::init(unsigned entries) {
+inline void scheduler_state::init(unsigned entries, unsigned setup_flags) {
 #ifdef CO_MIRA_ENABLE_TESTING
   if (this->test_failure_ == scheduler_test_failure::init) [[unlikely]]
     throw_uring_error(EINVAL, "io_uring_queue_init");
 #endif
 
-  constexpr unsigned setup_flags =
-      IORING_SETUP_COOP_TASKRUN | IORING_SETUP_TASKRUN_FLAG;
   int ret = io_uring_queue_init(entries, &this->ring_, setup_flags);
   if (ret != 0) [[unlikely]]
     throw_uring_error(-ret, "io_uring_queue_init");
@@ -481,8 +487,12 @@ inline void scheduler_state::handle_cqe(io_uring_cqe *cqe) {
 
     info->result = result;
 
-    if (type == utype::task_info_pointer) [[likely]]
+    if (auto *completion = std::exchange(info->completion, nullptr)) {
+      if (completion->complete_one())
+        this->push_handle(completion->continuation);
+    } else if (type == utype::task_info_pointer) [[likely]] {
       this->push_handle(info->handle);
+    }
   } else if (type == utype::msg_ring) {
     co_handle<> handle = co_handle<>::from_address(data.address_from_user_data());
     try {
@@ -615,7 +625,7 @@ inline void scheduler::init() {
 #ifdef CO_MIRA_ENABLE_TESTING
   this->state_.test_failure_ = this->test_failure_;
 #endif
-  this->state_.init(tuning::default_io_uring_entries);
+  this->state_.init(this->config_.io_uring_entries, this->config_.io_uring_setup_flags);
 }
 
 inline void scheduler::deinit() noexcept {
