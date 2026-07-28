@@ -7,6 +7,12 @@ include(GNUInstallDirs)
 list(APPEND CMAKE_MODULE_PATH "${PROJECT_SOURCE_DIR}/cmake")
 find_package(liburing REQUIRED)
 
+option(
+  CO_MIRA_BUILD_HTTP_BENCHMARKS
+  "Build the HTTP benchmark servers"
+  ON
+)
+
 # Cross-scheduler wakeup and submission are MSG_RING-only. There is no eventfd
 # fallback, so reject unsupported target kernels during configuration.
 set(CO_MIRA_MINIMUM_KERNEL_VERSION "5.19")
@@ -216,3 +222,7 @@ install(
   DESTINATION
     "${CMAKE_INSTALL_DOCDIR}"
 )
+
+if(CO_MIRA_BUILD_HTTP_BENCHMARKS)
+  add_subdirectory(example)
+endif()
