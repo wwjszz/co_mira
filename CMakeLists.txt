@@ -4,13 +4,8 @@ project(co_mira VERSION 0.1.0 LANGUAGES CXX)
 include(CTest)
 include(GNUInstallDirs)
 
-find_package(PkgConfig REQUIRED)
-pkg_check_modules(
-  CO_MIRA_LIBURING
-  REQUIRED
-  IMPORTED_TARGET
-  liburing
-)
+list(APPEND CMAKE_MODULE_PATH "${PROJECT_SOURCE_DIR}/cmake")
+find_package(liburing REQUIRED)
 
 # Cross-scheduler wakeup and submission are MSG_RING-only. There is no eventfd
 # fallback, so reject unsupported target kernels during configuration.
@@ -48,7 +43,7 @@ target_include_directories(
 target_link_libraries(
   co_mira
   INTERFACE
-    PkgConfig::CO_MIRA_LIBURING
+    liburing::liburing
 )
 
 # Enable internal counters only in Debug builds.
@@ -212,6 +207,7 @@ install(
   FILES
     "${PROJECT_BINARY_DIR}/cmake/co_miraConfig.cmake"
     "${PROJECT_BINARY_DIR}/cmake/co_miraConfigVersion.cmake"
+    "${PROJECT_SOURCE_DIR}/cmake/Findliburing.cmake"
   DESTINATION
     "${CO_MIRA_CMAKE_INSTALL_DIR}"
 )
