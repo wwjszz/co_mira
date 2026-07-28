@@ -10,8 +10,31 @@ add_executable(
   thread_http_server/main.cc
 )
 
+add_executable(
+  callback_http_server
+  callback_http_server/main.cc
+)
+
+add_executable(
+  epoll_http_server
+  epoll_http_server/main.cc
+)
+
 target_link_libraries(
   thread_http_server
+  PRIVATE
+    Threads::Threads
+)
+
+target_link_libraries(
+  callback_http_server
+  PRIVATE
+    uring
+    Threads::Threads
+)
+
+target_link_libraries(
+  epoll_http_server
   PRIVATE
     Threads::Threads
 )
@@ -42,6 +65,20 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
       -Wall
       -Wextra
   )
+
+  target_compile_options(
+    callback_http_server
+    PRIVATE
+      -Wall
+      -Wextra
+  )
+
+  target_compile_options(
+    epoll_http_server
+    PRIVATE
+      -Wall
+      -Wextra
+  )
 endif()
 
 find_program(CO_MIRA_CURL_EXECUTABLE curl)
@@ -65,9 +102,29 @@ if(BUILD_TESTING AND CO_MIRA_CURL_EXECUTABLE)
       "${CO_MIRA_CURL_EXECUTABLE}"
   )
 
+  add_test(
+    NAME test_callback_http_server
+    COMMAND
+      sh
+      "${PROJECT_SOURCE_DIR}/test/test_thread_http_server.sh"
+      "$<TARGET_FILE:callback_http_server>"
+      "${CO_MIRA_CURL_EXECUTABLE}"
+  )
+
+  add_test(
+    NAME test_epoll_http_server
+    COMMAND
+      sh
+      "${PROJECT_SOURCE_DIR}/test/test_thread_http_server.sh"
+      "$<TARGET_FILE:epoll_http_server>"
+      "${CO_MIRA_CURL_EXECUTABLE}"
+  )
+
   set_tests_properties(
     test_http_server
     test_thread_http_server
+    test_callback_http_server
+    test_epoll_http_server
     PROPERTIES
       TIMEOUT 20
   )

@@ -429,15 +429,48 @@ make_body(std::string body) {
   return header;
 }
 
-task<bool> send_all(const socket &client, std::string_view bytes) {
-  std::size_t sent = 0;
-  while (sent != bytes.size()) {
-    const std::span<const char> remaining{bytes.data() + sent,
-                                          bytes.size() - sent};
-    const int result = co_await client.send(remaining, MSG_NOSIGNAL);
+task<bool> send_response(const socket &client, std::string_view header,
+                         std::string_view body = {}) {
+  std::size_t header_sent = 0;
+  std::size_t body_sent = 0;
+  while (header_sent != header.size() || body_sent != body.size()) {
+    std::array<iovec, 2> iovecs{};
+    std::size_t count = 0;
+    if (header_sent != header.size()) {
+      iovecs[count++] = {
+          .iov_base = const_cast<char *>(header.data() + header_sent),
+          .iov_len = header.size() - header_sent,
+      };
+    }
+    if (body_sent != body.size()) {
+      iovecs[count++] = {
+          .iov_base = const_cast<char *>(body.data() + body_sent),
+          .iov_len = body.size() - body_sent,
+      };
+    }
+
+    msghdr message{};
+    message.msg_iov = iovecs.data();
+    message.msg_iovlen = count;
+    const int result = co_await mira::co::io::sendmsg(
+        client.native_handle(), &message, MSG_NOSIGNAL);
     if (result <= 0)
       co_return false;
-    sent += static_cast<std::size_t>(result);
+
+    std::size_t completed = static_cast<std::size_t>(result);
+    const std::size_t header_remaining = header.size() - header_sent;
+    const std::size_t header_completed =
+        std::min(completed, header_remaining);
+    header_sent += header_completed;
+    completed -= header_completed;
+
+    const std::size_t body_remaining = body.size() - body_sent;
+    const std::size_t body_completed =
+        std::min(completed, body_remaining);
+    body_sent += body_completed;
+    completed -= body_completed;
+    if (completed != 0)
+      co_return false;
   }
   co_return true;
 }
@@ -459,8 +492,7 @@ task<void> serve_connection(socket client, const static_site &site,
             text_response(431, "Request Header Fields Too Large",
                           "Request headers exceed 16 KiB.\n");
         const std::string header = build_response_header(response, false);
-        (void)co_await send_all(client, header);
-        (void)co_await send_all(client, *response.body);
+        (void)co_await send_response(client, header, *response.body);
         co_return;
       }
 
@@ -478,8 +510,7 @@ task<void> serve_connection(socket client, const static_site &site,
           text_response(431, "Request Header Fields Too Large",
                         "Request headers exceed 16 KiB.\n");
       const std::string header = build_response_header(response, false);
-      (void)co_await send_all(client, header);
-      (void)co_await send_all(client, *response.body);
+      (void)co_await send_response(client, header, *response.body);
       co_return;
     }
 
@@ -489,8 +520,7 @@ task<void> serve_connection(socket client, const static_site &site,
       const http_response response =
           text_response(400, "Bad Request", "Malformed HTTP request.\n");
       const std::string header = build_response_header(response, false);
-      (void)co_await send_all(client, header);
-      (void)co_await send_all(client, *response.body);
+      (void)co_await send_response(client, header, *response.body);
       co_return;
     }
 
@@ -503,10 +533,11 @@ task<void> serve_connection(socket client, const static_site &site,
         route_request(*request, site, metrics, worker_count);
     const std::string header =
         build_response_header(response, keep_alive);
-    if (!(co_await send_all(client, header)))
-      co_return;
-    if (!request->head_only && response.body &&
-        !(co_await send_all(client, *response.body)))
+    const std::string_view body =
+        !request->head_only && response.body
+            ? std::string_view{*response.body}
+            : std::string_view{};
+    if (!(co_await send_response(client, header, body)))
       co_return;
 
     pending.erase(0, consumed);

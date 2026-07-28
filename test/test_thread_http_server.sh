@@ -55,6 +55,13 @@ grep -qi 'Connection: keep-alive' "$headers"
 "$curl" -fsSI "http://127.0.0.1:$port/benchmark" |
   grep -qi 'Content-Length: 3'
 
+"$curl" -fsS "http://127.0.0.1:$port/benchmark?source=protocol-test" |
+  grep -qx 'OK'
+
+method_not_allowed=$("$curl" -sS -X POST -o /dev/null -w '%{http_code}' \
+  "http://127.0.0.1:$port/benchmark")
+[ "$method_not_allowed" = 405 ]
+
 not_found=$("$curl" -sS -o /dev/null -w '%{http_code}' \
   "http://127.0.0.1:$port/missing")
 [ "$not_found" = 404 ]

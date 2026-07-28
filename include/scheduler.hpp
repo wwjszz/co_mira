@@ -316,7 +316,9 @@ inline void scheduler_state::init(unsigned entries) {
     throw_uring_error(EINVAL, "io_uring_queue_init");
 #endif
 
-  int ret = io_uring_queue_init(entries, &this->ring_, 0);
+  constexpr unsigned setup_flags =
+      IORING_SETUP_COOP_TASKRUN | IORING_SETUP_TASKRUN_FLAG;
+  int ret = io_uring_queue_init(entries, &this->ring_, setup_flags);
   if (ret != 0) [[unlikely]]
     throw_uring_error(-ret, "io_uring_queue_init");
 

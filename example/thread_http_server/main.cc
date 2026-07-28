@@ -27,6 +27,7 @@
 namespace {
 
 constexpr std::size_t max_header_size = 16 * 1024;
+constexpr std::size_t receive_buffer_size = 8 * 1024;
 constexpr std::size_t max_requests_per_connection = 100;
 constexpr std::string_view benchmark_body = "OK\n";
 constexpr std::string_view not_found_body = "Not Found\n";
@@ -114,6 +115,7 @@ private:
 };
 
 struct request {
+  std::string_view method;
   std::string_view target;
   bool head_only = false;
   bool keep_alive = true;
@@ -165,12 +167,15 @@ parse_request(std::string_view header) {
     return std::nullopt;
 
   const std::string_view method = first_line.substr(0, method_end);
-  const std::string_view target =
+  std::string_view target =
       first_line.substr(method_end + 1, target_end - method_end - 1);
   const std::string_view version = first_line.substr(target_end + 1);
-  if ((method != "GET" && method != "HEAD") || target.empty() ||
+  if (method.empty() || target.empty() || target.front() != '/' ||
       (version != "HTTP/1.1" && version != "HTTP/1.0"))
     return std::nullopt;
+  if (const std::size_t query = target.find('?');
+      query != std::string_view::npos)
+    target = target.substr(0, query);
 
   const std::string normalized = lowercase(header);
   bool keep_alive = version == "HTTP/1.1";
@@ -181,6 +186,7 @@ parse_request(std::string_view header) {
     keep_alive = true;
 
   return request{
+      .method = method,
       .target = target,
       .head_only = method == "HEAD",
       .keep_alive = keep_alive,
@@ -229,8 +235,8 @@ parse_request(std::string_view header) {
 
 void handle_connection(unique_fd client) {
   std::string pending;
-  pending.reserve(4096);
-  char receive_buffer[4096];
+  pending.reserve(receive_buffer_size);
+  char receive_buffer[receive_buffer_size];
   std::size_t request_count = 0;
 
   while (!stop_requested) {
@@ -266,9 +272,14 @@ void handle_connection(unique_fd client) {
         parsed->keep_alive &&
         request_count < max_requests_per_connection;
 
-    const bool benchmark = parsed->target == "/benchmark";
-    const int status = benchmark ? 200 : 404;
-    const std::string_view reason = benchmark ? "OK" : "Not Found";
+    const bool method_allowed =
+        parsed->method == "GET" || parsed->method == "HEAD";
+    const bool benchmark =
+        method_allowed && parsed->target == "/benchmark";
+    const int status = !method_allowed ? 405 : benchmark ? 200 : 404;
+    const std::string_view reason =
+        !method_allowed ? "Method Not Allowed"
+                        : benchmark ? "OK" : "Not Found";
     const std::string_view body =
         benchmark ? benchmark_body : not_found_body;
     const std::string header = build_response_header(
