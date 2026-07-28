@@ -181,8 +181,6 @@ install(
     co_mira
   EXPORT
     co_miraTargets
-  INCLUDES DESTINATION
-    "${CMAKE_INSTALL_INCLUDEDIR}"
 )
 
 install(

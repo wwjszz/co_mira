@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.20)
 
 project(co_mira_consumer LANGUAGES CXX)
 
-find_package(co_mira CONFIG REQUIRED)
+find_package(co_mira 0.1 CONFIG REQUIRED)
 
 add_executable(
   co_mira_consumer
