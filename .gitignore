@@ -4,7 +4,7 @@ cmake_install.cmake
 Makefile
 /test/bin
 /build*/
-/README.md
+/benchmark-results/
 /TODO/
 /docs/
 .cache/

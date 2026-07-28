@@ -34,6 +34,8 @@
 namespace {
 
 constexpr unsigned ring_entries = 256;
+constexpr unsigned setup_flags =
+    IORING_SETUP_COOP_TASKRUN | IORING_SETUP_TASKRUN_FLAG;
 constexpr std::size_t max_header_size = 16 * 1024;
 constexpr std::size_t receive_buffer_size = 8 * 1024;
 constexpr std::size_t max_requests_per_connection = 100;
@@ -384,8 +386,9 @@ operation_from_user_data(uint64_t data) noexcept {
 class worker {
 public:
   explicit worker(server_metrics &metrics) : metrics_(&metrics) {
-    check_uring(io_uring_queue_init(ring_entries, &this->ring_, 0),
-                "io_uring_queue_init(worker)");
+    check_uring(
+        io_uring_queue_init(ring_entries, &this->ring_, setup_flags),
+        "io_uring_queue_init(worker)");
     this->initialized_ = true;
 
     try {
@@ -720,8 +723,9 @@ public:
   callback_server(uint16_t port, std::size_t worker_count,
                   int signal_fd, server_metrics &metrics)
       : signal_fd_(signal_fd), metrics_(&metrics) {
-    check_uring(io_uring_queue_init(ring_entries, &this->ring_, 0),
-                "io_uring_queue_init(front)");
+    check_uring(
+        io_uring_queue_init(ring_entries, &this->ring_, setup_flags),
+        "io_uring_queue_init(front)");
     this->initialized_ = true;
 
     this->listener_ = this->create_listener(port, this->bound_port_);
