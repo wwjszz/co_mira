@@ -181,7 +181,53 @@ coroutine 与 callback 执行模型本身的性能差异；两者都使用 flags
 下面的完整矩阵是在这两项优化之前采集的，保留用于展示连接数与 worker 数的
 整体变化趋势，不应与上表混作同一版本的绝对性能比较。
 
-## Results
+## Current WSL2 rerun
+
+2026-07-29 使用当前统一 setup flags 的源码重新运行了完整 matrix：
+
+| Item | Value |
+|---|---|
+| CPU | Intel Core i9-14900KF |
+| OS | WSL2 |
+| Kernel | `6.18.33.2-microsoft-standard-WSL2` |
+| Compiler | GCC `15.2.0` |
+| liburing | `2.14-1` |
+| Build | CMake `Release` |
+
+两 worker case 将 front 和 worker 固定到 `0,2,4`，wrk 固定到 `10,12`。
+除 `c1` 使用一个 wrk thread 外，其余 case 使用两个。每个点预热 3 秒，再进行
+3 次 10 秒正式采样并取中位数；所有正式样本的 `error_runs` 均为 0。
+
+![Current WSL2 connection scaling](results-wsl-current/throughput-connections.svg)
+
+| Case | co_mira coroutine | io_uring callback | epoll event-loop | blocking pool |
+|---|---:|---:|---:|---:|
+| `w2-c1` | 32,832 | 33,504 | 32,197 | **33,660** |
+| `w2-c16` | **515,601** | 485,743 | 405,766 | 69,162 |
+| `w2-c64` | **631,164** | 613,848 | 526,134 | 72,259 |
+| `w2-c256` | **671,786** | 656,630 | 540,903 | 71,154 |
+| `w2-c1024` | **649,172** | 625,048 | 512,489 | 68,517 |
+
+单位为 requests/second。统一 ring flags 后，coroutine 和 callback 在
+`c16` 到 `c1024` 的差距为 2.3% 到 6.1%，明显小于二者相对 epoll 的差距。
+`w2-c256` 的 P99 分别为 0.522 ms、0.488 ms、0.710 ms 和 350.59 ms；
+`w2-c1024` 则为 1.76 ms、1.91 ms、2.33 ms 和 1450 ms。
+
+![Current WSL2 worker scaling](results-wsl-current/throughput-workers.svg)
+
+| Workers (`c256`) | co_mira coroutine | io_uring callback | epoll event-loop | blocking pool |
+|---:|---:|---:|---:|---:|
+| 1 | 530,171 | **560,590** | 244,306 | 34,264 |
+| 2 | **671,786** | 656,630 | 540,903 | 71,154 |
+| 4 | **422,137** | 410,145 | 312,931 | 127,885 |
+
+三个异步实现仍然都是 2 workers 最快；4 workers 增加了调度和跨 event-loop
+协调成本。blocking pool 随 worker 数继续增长，但高并发 P99 仍远高于异步实现。
+完整数据见 [`results-wsl-current/results.csv`](results-wsl-current/results.csv)。
+
+## Historical pre-optimization results
+
+下面的完整矩阵来自合并发送和统一 setup flags 之前，保留用于历史对照。
 
 完整机器可读数据见 [`results/results.csv`](results/results.csv)。
 
