@@ -1,17 +1,24 @@
 # co_mira
 
-`co_mira` is a header-only C++23 coroutine runtime for Linux, built on
-[`io_uring`](https://kernel.dk/io_uring.pdf) and liburing. It provides a small
-async I/O runtime without virtual dispatch or a separate code-generation step.
+`co_mira` is a lightweight coroutine library for writing high-concurrency Linux
+applications as straightforward, sequential C++ code. Built on
+[`io_uring`](https://kernel.dk/io_uring.pdf), it combines awaitable I/O with
+task composition, coroutine-aware synchronization and explicit scheduler
+control, avoiding callback-driven state machines without hiding the runtime.
+
+The library is header-only, targets C++23 and works for both single-scheduler
+programs and applications that distribute work across multiple schedulers.
 
 ## Features
 
-- Single-thread and multi-scheduler runtimes with `IORING_OP_MSG_RING`
-- `task`, `shared_task`, detached tasks and generators
-- Socket, file and timer operations with owning cancellation
-- Coroutine mutex, semaphore and condition variable
-- `when_all`, `when_any` and `when_some`
-- Cross-scheduler `co_spawn`, `resume_on` and orderly shutdown
+- **Awaitable I/O:** socket, file and timer operations, linked requests,
+  operation timeouts and owning cancellation.
+- **Coroutine building blocks:** `task`, `shared_task`, detached tasks and
+  generators, plus `when_all`, `when_any` and `when_some` for composition.
+- **Synchronization:** coroutine-aware mutexes, semaphores and condition
+  variables that can coordinate work across schedulers.
+- **Multi-scheduler execution:** cross-scheduler `co_spawn`, `resume_on` and
+  `IORING_OP_MSG_RING` transport, with orderly shutdown and exception reporting.
 
 The current minimum target is Linux 5.19. A C++23 compiler, CMake 3.20+ and
 liburing are required.
